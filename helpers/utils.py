@@ -88,6 +88,104 @@ async def add_user_to_thread_safe(thread: discord.Thread, member: discord.Member
         return False
 
 
+async def close_all_pm_threads(guild: discord.Guild, game: 'Game') -> int:
+    """
+    Close (lock and archive) all PM threads.
+    Returns count of threads closed.
+    """
+    closed_count = 0
+    
+    for thread_id in game.pm_threads.values():
+        thread = guild.get_thread(thread_id)
+        if thread:
+            try:
+                await thread.send("🔒 **PMs have been disabled. This thread is now closed.**")
+                await thread.edit(locked=True, archived=True)
+                closed_count += 1
+            except Exception as e:
+                print(f"Error closing PM thread {thread_id}: {e}")
+    
+    return closed_count
+
+
+async def create_pm_thread(
+    guild: discord.Guild,
+    game: 'Game',
+    player1_id: int,
+    player2_id: int
+) -> Optional[discord.Thread]:
+    """
+    Create a PM thread between two players.
+    Returns the thread or None if creation failed.
+    """
+    from helpers.permissions import get_gm_role, get_im_role
+    
+    game_channel = guild.get_channel(game.game_channel_id)
+    if not game_channel:
+        return None
+    
+    player1 = game.players.get(player1_id)
+    player2 = game.players.get(player2_id)
+    
+    if not player1 or not player2:
+        return None
+    
+    # Generate thread name
+    if game.anon_mode:
+        name1 = player1.anon_identity or "Player1"
+        name2 = player2.anon_identity or "Player2"
+    else:
+        name1 = player1.display_name
+        name2 = player2.display_name
+    
+    thread_prefix = game.game_tag.lower() if game.game_tag else "pm"
+    thread_name = f"💬-{thread_prefix}-{name1[:10]}-{name2[:10]}"
+    
+    try:
+        pm_thread = await game_channel.create_thread(
+            name=thread_name,
+            type=discord.ChannelType.private_thread,
+            invitable=False
+        )
+        
+        # Add both players
+        member1 = guild.get_member(player1_id)
+        member2 = guild.get_member(player2_id)
+        
+        if member1:
+            await add_user_to_thread_safe(pm_thread, member1)
+        if member2:
+            await add_user_to_thread_safe(pm_thread, member2)
+        
+        # Add GMs/IMs if configured
+        if game.gms_see_pms:
+            gm_role = get_gm_role(guild)
+            im_role = get_im_role(guild)
+            
+            for role in [gm_role, im_role]:
+                if role:
+                    for member in role.members:
+                        await add_user_to_thread_safe(pm_thread, member)
+        
+        # Store thread reference
+        key = game.get_pm_thread_key(player1_id, player2_id)
+        game.pm_threads[key] = pm_thread.id
+        
+        # Send welcome message
+        gm_note = " GMs/IMs can see this conversation." if game.gms_see_pms else ""
+        await pm_thread.send(
+            f"💬 **Private conversation between {name1} and {name2}**\n"
+            f"You can chat privately here.{gm_note}"
+        )
+        
+        return pm_thread
+        
+    except Exception as e:
+        print(f"Error creating PM thread: {e}")
+        return None
+        return False
+
+
 async def archive_game(guild: discord.Guild, game: Game) -> tuple[int, str]:
     """
     Archive all game threads and make them public.

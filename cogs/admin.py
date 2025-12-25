@@ -12,7 +12,7 @@ from helpers.permissions import (
 )
 from helpers.utils import (
     update_game_channel_permissions, archive_game, 
-    add_user_to_thread_safe, format_time_remaining
+    add_user_to_thread_safe, format_time_remaining, close_all_pm_threads
 )
 
 
@@ -87,6 +87,15 @@ class AdminCog(commands.Cog):
                 await add_user_to_thread_safe(dead_spec_thread, player)
         
         await update_game_channel_permissions(interaction.guild, game)
+        
+        # Check if PMs should be closed
+        if game.pm_enabling_roles and not game.are_pms_available():
+            game_channel = interaction.guild.get_channel(game.game_channel_id)
+            closed_count = await close_all_pm_threads(interaction.guild, game)
+            if closed_count > 0 and game_channel:
+                await game_channel.send(
+                    f"🔒 **PMs have been disabled!** {closed_count} PM thread(s) have been closed."
+                )
         
         player_name = game.get_player_display_name(player.id)
         

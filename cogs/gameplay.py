@@ -12,7 +12,7 @@ from helpers.matching import parse_vote_target, parse_kill_target
 from helpers.anonymous import get_or_create_webhook, announce_vote
 from helpers.utils import (
     format_time_remaining, update_game_channel_permissions, 
-    archive_game, add_user_to_thread_safe
+    archive_game, add_user_to_thread_safe, close_all_pm_threads
 )
 from data.identities import ANON_IDENTITIES
 
@@ -156,6 +156,21 @@ class GameplayCog(commands.Cog):
         
         return "\n".join(lines)
     
+    async def _check_pm_closure(self, guild, game, game_channel) -> None:
+        """Check if PMs should be closed after a death (role-based PM disabling)."""
+        # Only matters if there are PM-enabling roles configured
+        if not game.pm_enabling_roles:
+            return
+        
+        # Check if PMs are still available
+        if not game.are_pms_available():
+            # Close all PM threads
+            closed_count = await close_all_pm_threads(guild, game)
+            if closed_count > 0 and game_channel:
+                await game_channel.send(
+                    f"🔒 **PMs have been disabled!** {closed_count} PM thread(s) have been closed."
+                )
+    
     async def _process_day_end(self, guild, game, game_channel, dead_spec_thread):
         """Process end of day phase - handle elimination."""
         day_votes = game.get_day_votes()
@@ -174,6 +189,9 @@ class GameplayCog(commands.Cog):
             )
         
         await update_game_channel_permissions(guild, game)
+        
+        # Check if PMs should be closed
+        await self._check_pm_closure(guild, game, game_channel)
         
         # Check win
         winner = game.check_win_condition()
@@ -291,6 +309,9 @@ class GameplayCog(commands.Cog):
             )
         
         await update_game_channel_permissions(guild, game)
+        
+        # Check if PMs should be closed
+        await self._check_pm_closure(guild, game, game_channel)
         
         # Check win
         winner = game.check_win_condition()

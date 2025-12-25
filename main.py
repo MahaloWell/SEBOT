@@ -13,8 +13,9 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from helpers.game_state import games, get_game
-from helpers.matching import parse_vote_target, parse_kill_target
+from helpers.matching import parse_vote_target, parse_kill_target, find_player_by_name
 from helpers.anonymous import get_or_create_webhook, announce_vote
+from helpers.utils import create_pm_thread
 from data.identities import ANON_IDENTITIES
 
 # Cogs to load
@@ -90,6 +91,8 @@ async def on_message(message):
     
     if content.startswith('!say'):
         await handle_say(message)
+    elif content.startswith('!pm'):
+        await handle_pm(message)
     elif content.startswith('!vote'):
         await handle_vote(message)
     elif content.startswith('!unvote'):
@@ -163,6 +166,84 @@ async def handle_say(message):
     )
     
     await message.add_reaction("✅")
+
+
+async def handle_pm(message):
+    """Handle private message requests between players."""
+    game = get_game(message.guild.id)
+    
+    if not game:
+        await message.channel.send("❌ No game exists in this server!")
+        return
+    
+    if game.status != 'active':
+        await message.channel.send("❌ Game is not active!")
+        return
+    
+    user_id = message.author.id
+    
+    if user_id not in game.players:
+        await message.channel.send("❌ You are not in this game!")
+        return
+    
+    player = game.players[user_id]
+    
+    if not player.is_alive:
+        await message.channel.send("❌ Dead players cannot send PMs!")
+        return
+    
+    # Must be in private thread
+    if message.channel.id != player.private_channel_id:
+        await message.channel.send("❌ Use !pm in your private GM-PM thread!")
+        return
+    
+    # Check if PMs are available
+    if not game.are_pms_available():
+        await message.channel.send("❌ PMs are currently disabled!")
+        return
+    
+    # Parse target
+    parts = message.content.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.channel.send("❌ Usage: `!pm [player name]`")
+        return
+    
+    target_name = parts[1].strip()
+    
+    # Find target player
+    result = find_player_by_name(game, target_name, alive_only=True)
+    
+    if not result.success:
+        await message.channel.send(result.error)
+        return
+    
+    target_id = result.target_id
+    
+    # Can't PM yourself
+    if target_id == user_id:
+        await message.channel.send("❌ You can't PM yourself!")
+        return
+    
+    # Check if PM thread already exists
+    existing_thread_id = game.get_pm_thread_id(user_id, target_id)
+    if existing_thread_id:
+        existing_thread = message.guild.get_thread(existing_thread_id)
+        if existing_thread:
+            await message.channel.send(
+                f"💬 You already have a PM thread with **{result.target_display}**: {existing_thread.mention}"
+            )
+            return
+    
+    # Create new PM thread
+    pm_thread = await create_pm_thread(message.guild, game, user_id, target_id)
+    
+    if pm_thread:
+        await message.add_reaction("✅")
+        await message.channel.send(
+            f"💬 Created PM thread with **{result.target_display}**: {pm_thread.mention}"
+        )
+    else:
+        await message.channel.send("❌ Failed to create PM thread. Please contact a GM.")
 
 
 async def handle_vote(message):

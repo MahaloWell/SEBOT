@@ -149,7 +149,9 @@ class SetupCog(commands.Cog):
         anon_mode="Enable anonymous mode: True or False",
         auto_phase_transition="Enable automatic phase transitions: True or False",
         allow_no_elimination="Allow voting for no elimination: True or False",
-        min_votes_to_eliminate="Minimum votes to eliminate (0=plurality, -1=force RNG if 0 votes)"
+        min_votes_to_eliminate="Minimum votes to eliminate (0=plurality, -1=force RNG if 0 votes)",
+        pms_enabled="Allow players to PM each other: True or False",
+        gms_see_pms="GMs/IMs can see PM threads: True or False"
     )
     @app_commands.choices(
         day_unit=[
@@ -174,7 +176,9 @@ class SetupCog(commands.Cog):
         anon_mode: bool = None,
         auto_phase_transition: bool = None,
         allow_no_elimination: bool = None,
-        min_votes_to_eliminate: int = None
+        min_votes_to_eliminate: int = None,
+        pms_enabled: bool = None,
+        gms_see_pms: bool = None
     ):
         """Configure game settings."""
         game = get_game(interaction.guild_id)
@@ -265,6 +269,14 @@ class SetupCog(commands.Cog):
             else:
                 changes.append(f"Minimum votes: {min_votes_to_eliminate}")
         
+        if pms_enabled is not None:
+            game.pms_enabled = pms_enabled
+            changes.append(f"Player PMs: {'Enabled' if pms_enabled else 'Disabled'}")
+        
+        if gms_see_pms is not None:
+            game.gms_see_pms = gms_see_pms
+            changes.append(f"GMs see PMs: {'Yes' if gms_see_pms else 'No'}")
+        
         if not changes:
             # Show current settings
             day_display = f"{game.day_length_minutes // 60} hours" if game.day_length_minutes >= 60 else f"{game.day_length_minutes} minutes"
@@ -288,12 +300,40 @@ class SetupCog(commands.Cog):
                 f"• Auto phase transitions: {'Enabled' if game.auto_phase_transition else 'Disabled'}\n"
                 f"• Allow no elimination: {'Enabled' if game.allow_no_elimination else 'Disabled'}\n"
                 f"• Minimum votes: {min_votes_display}\n"
+                f"• Player PMs: {'Enabled' if game.pms_enabled else 'Disabled'}\n"
+                f"• GMs see PMs: {'Yes' if game.gms_see_pms else 'No'}\n"
                 f"• Game channel: {'Set' if game.game_channel_id else 'Not set'}"
             )
         else:
             await interaction.response.send_message(
                 f"✅ **Settings Updated:**\n" + "\n".join(f"• {change}" for change in changes)
             )
+    
+    @app_commands.command(name="set_pm_roles", description="[GM/IM] Set which roles enable PMs (empty to always allow)")
+    @app_commands.describe(
+        roles="Comma-separated role names that enable PMs (e.g., 'Messenger,Diplomat'). Leave empty to clear."
+    )
+    @gm_only()
+    @require_game(status='setup')
+    async def set_pm_roles(self, interaction: discord.Interaction, roles: str = None):
+        """Set roles that keep PMs enabled. When all players with these roles die, PMs are disabled."""
+        game = get_game(interaction.guild_id)
+        
+        if not roles or roles.strip() == "":
+            game.pm_enabling_roles = []
+            await interaction.response.send_message(
+                "✅ PM-enabling roles cleared. PMs will always be available (if enabled)."
+            )
+            return
+        
+        # Parse comma-separated roles
+        role_list = [r.strip() for r in roles.split(',') if r.strip()]
+        game.pm_enabling_roles = role_list
+        
+        await interaction.response.send_message(
+            f"✅ PM-enabling roles set to: **{', '.join(role_list)}**\n"
+            f"PMs will be disabled when all players with these roles are eliminated."
+        )
 
 
 async def setup(bot: commands.Bot):

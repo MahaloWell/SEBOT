@@ -53,6 +53,12 @@ class Game:
     dead_spec_thread_id: Optional[int] = None
     elim_discussion_thread_id: Optional[int] = None
     
+    # PM System
+    pm_threads: dict[frozenset, int] = field(default_factory=dict)  # {frozenset({player1_id, player2_id}): thread_id}
+    pms_enabled: bool = True  # Master switch for PMs
+    gms_see_pms: bool = True  # Whether GMs/IMs are added to PM threads
+    pm_enabling_roles: list[str] = field(default_factory=list)  # Roles that keep PMs active (empty = always on)
+    
     # Game metadata
     game_tag: Optional[str] = None
     flavor_name: Optional[str] = None
@@ -122,6 +128,31 @@ class Game:
                 tally[target_id] = []
             tally[target_id].append(voter_id)
         return tally
+    
+    def get_pm_thread_key(self, player1_id: int, player2_id: int) -> frozenset:
+        """Get the key for a PM thread between two players."""
+        return frozenset({player1_id, player2_id})
+    
+    def get_pm_thread_id(self, player1_id: int, player2_id: int) -> Optional[int]:
+        """Get existing PM thread ID between two players, or None."""
+        key = self.get_pm_thread_key(player1_id, player2_id)
+        return self.pm_threads.get(key)
+    
+    def are_pms_available(self) -> bool:
+        """Check if PMs are currently available based on settings and roles."""
+        if not self.pms_enabled:
+            return False
+        
+        # If no enabling roles specified, PMs are always available
+        if not self.pm_enabling_roles:
+            return True
+        
+        # Check if any player with an enabling role is alive
+        for player in self.players.values():
+            if player.is_alive and player.role in self.pm_enabling_roles:
+                return True
+        
+        return False
 
 
 def get_game(guild_id: int) -> Optional[Game]:

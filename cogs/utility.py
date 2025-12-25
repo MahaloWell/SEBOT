@@ -43,6 +43,7 @@ class UtilityCog(commands.Cog):
 • `/assign_gm` / `/assign_im` - Give roles
 • `/remove_gm` / `/remove_im` - Remove roles
 • `/config_game` - Configure game settings
+• `/set_pm_roles` - Set roles that enable PMs
 • `/assign_role` - Assign alignment and role
 • `/randomize_alignments` - Randomly assign alignments
 • `/assign_identities` - Randomly assign anon identities
@@ -83,6 +84,10 @@ class UtilityCog(commands.Cog):
         vote_cmd += " - Vote during day\n"
         player_commands += vote_cmd
         player_commands += "• `!unvote` - Remove your current vote\n"
+        
+        # PM command
+        if game and game.pms_enabled:
+            player_commands += "• `!pm [player]` - Start a private conversation\n"
         
         # Elim commands
         if game and interaction.user.id in game.players:
