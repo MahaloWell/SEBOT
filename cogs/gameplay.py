@@ -14,6 +14,11 @@ from helpers.utils import (
     format_time_remaining, update_game_channel_permissions, 
     archive_game, add_user_to_thread_safe, close_all_pm_threads
 )
+from helpers.role_actions import (
+    process_night_actions, apply_vote_modifications, 
+    format_vote_count_with_modifications, send_action_results,
+    format_tineye_messages, assign_mistborn_power
+)
 from data.identities import ANON_IDENTITIES
 
 
@@ -118,43 +123,9 @@ class GameplayCog(commands.Cog):
                 await game_channel.send("❌ Error processing automatic phase end. Please contact a GM.")
     
     def _format_final_vote_count(self, game) -> str:
-        """Format a complete vote record for end of day."""
-        day_votes = game.get_day_votes()
-        
-        # Group votes by target
-        vote_groups = {}
-        for voter_id, target_id in day_votes.items():
-            if target_id not in vote_groups:
-                vote_groups[target_id] = []
-            vote_groups[target_id].append(voter_id)
-        
-        # Find players who didn't vote (abstained)
-        alive_players = [uid for uid, p in game.players.items() if p.is_alive]
-        abstainers = [uid for uid in alive_players if uid not in day_votes]
-        
-        # Build the output
-        lines = ["📊 **Final Vote Count**"]
-        
-        # Sort by vote count (descending)
-        sorted_targets = sorted(vote_groups.items(), key=lambda x: len(x[1]), reverse=True)
-        
-        for target_id, voter_ids in sorted_targets:
-            # Get target name
-            if target_id == 'vote_none':
-                target_name = "No Elimination"
-            else:
-                target_name = game.get_player_display_name(target_id)
-            
-            # Get voter names
-            voter_names = [game.get_player_display_name(vid) for vid in voter_ids]
-            lines.append(f"**{target_name}** ({len(voter_ids)}): {', '.join(voter_names)}")
-        
-        # Add abstainers
-        if abstainers:
-            abstainer_names = [game.get_player_display_name(uid) for uid in abstainers]
-            lines.append(f"**No Vote** ({len(abstainers)}): {', '.join(abstainer_names)}")
-        
-        return "\n".join(lines)
+        """Format a complete vote record for end of day with Riot/Soothe effects."""
+        # Use the new vote modification function that handles Rioter/Soother
+        return format_vote_count_with_modifications(game)
     
     async def _check_pm_closure(self, guild, game, game_channel) -> None:
         """Check if PMs should be closed after a death (role-based PM disabling)."""
@@ -175,18 +146,27 @@ class GameplayCog(commands.Cog):
         """Process end of day phase - handle elimination."""
         day_votes = game.get_day_votes()
         
-        # Generate vote count before elimination (while all players still "alive" for display purposes)
+        # Generate vote count before elimination (includes Riot/Soothe effects in totals)
         vote_count_msg = self._format_final_vote_count(game)
         
         elimination_msg = await self._resolve_elimination(guild, game, day_votes, dead_spec_thread)
         
+        # Process delayed deaths (Thug delayed_phase dying at night start, delayed_cycle from execution)
+        delayed_death_msgs = await self._process_delayed_deaths(guild, game, dead_spec_thread, 'night', game.day_number)
+        
+        # Build full announcement
+        announcement = f"☀️ **Day {game.day_number} has ended.**\n\n{vote_count_msg}\n\n{elimination_msg}"
+        
+        if delayed_death_msgs:
+            announcement += "\n\n" + "\n\n".join(delayed_death_msgs)
+        
+        announcement += f"\n\n🌙 **Night {game.day_number} begins...**"
+        
         if game_channel:
-            await game_channel.send(
-                f"☀️ **Day {game.day_number} has ended.**\n\n"
-                f"{vote_count_msg}\n\n"
-                f"{elimination_msg}\n\n"
-                f"🌙 **Night {game.day_number} begins...**"
-            )
+            await game_channel.send(announcement)
+        
+        # Send action results (Riot/Soothe feedback, Thug survival)
+        await send_action_results(guild, game)
         
         await update_game_channel_permissions(guild, game)
         
@@ -204,22 +184,54 @@ class GameplayCog(commands.Cog):
         game.phase_end_time = datetime.now() + timedelta(minutes=game.night_length_minutes)
         game.warnings_sent = set()
     
+    async def _process_delayed_deaths(self, guild, game, dead_spec_thread, phase_type, day_num):
+        """
+        Process delayed Thug deaths.
+        phase_type: 'day' (processing at day start) or 'night' (processing at night start)
+        day_num: the day number we're entering
+        Returns list of death announcement messages.
+        """
+        messages = []
+        remaining_deaths = []
+        
+        for player_id, trigger_day, trigger_phase in game.delayed_deaths:
+            if trigger_day == day_num and trigger_phase == phase_type:
+                # Time to die
+                player = game.players.get(player_id)
+                if player and player.is_alive:
+                    player.is_alive = False
+                    game.eliminated.append(player_id)
+                    
+                    player_name = game.get_player_display_name(player_id)
+                    messages.append(
+                        f"💀 **{player_name} has succumbed to their wounds!**\n"
+                        f"They were: **{player.alignment.title()} - {player.role or 'Vanilla'}**"
+                    )
+                    
+                    if dead_spec_thread:
+                        member = guild.get_member(player_id)
+                        if member:
+                            await add_user_to_thread_safe(dead_spec_thread, member)
+            else:
+                remaining_deaths.append((player_id, trigger_day, trigger_phase))
+        
+        game.delayed_deaths = remaining_deaths
+        return messages
+    
     async def _resolve_elimination(self, guild, game, day_votes, dead_spec_thread):
         """Resolve day phase elimination. Returns announcement message."""
         min_votes = game.min_votes_to_eliminate
         
-        if not day_votes:
+        # Get effective votes after Riot/Soothe modifications
+        effective_votes = apply_vote_modifications(game)
+        
+        if not effective_votes:
             if min_votes == -1:
                 return await self._random_elimination(guild, game, dead_spec_thread)
             return "**No votes were cast. No one was eliminated.**"
         
-        # Tally votes
-        vote_tally = {}
-        for voter_id, target_id in day_votes.items():
-            vote_tally[target_id] = vote_tally.get(target_id, 0) + 1
-        
-        max_votes = max(vote_tally.values())
-        top_voted = [tid for tid, count in vote_tally.items() if count == max_votes]
+        max_votes = max(effective_votes.values())
+        top_voted = [tid for tid, count in effective_votes.items() if count == max_votes]
         
         # Check minimum threshold
         if min_votes > 0 and max_votes < min_votes:
@@ -240,7 +252,7 @@ class GameplayCog(commands.Cog):
         
         # Random tiebreaker
         eliminated_id = random.choice(player_votes)
-        return await self._eliminate_player(guild, game, eliminated_id, dead_spec_thread)
+        return await self._eliminate_player(guild, game, eliminated_id, dead_spec_thread, is_execution=True)
     
     async def _random_elimination(self, guild, game, dead_spec_thread):
         """Perform random elimination when no votes cast and min_votes=-1."""
@@ -249,16 +261,53 @@ class GameplayCog(commands.Cog):
             return "**No votes were cast. No one was eliminated.**"
         
         eliminated_id = random.choice(alive_players)
-        msg = await self._eliminate_player(guild, game, eliminated_id, dead_spec_thread)
+        msg = await self._eliminate_player(guild, game, eliminated_id, dead_spec_thread, is_execution=True)
         return msg.replace("has been eliminated!", "has been randomly eliminated!** (No votes were cast)")
     
-    async def _eliminate_player(self, guild, game, user_id, dead_spec_thread):
+    async def _eliminate_player(self, guild, game, user_id, dead_spec_thread, is_execution=False):
         """Eliminate a player and return announcement message."""
         player = game.players[user_id]
+        player_name = game.get_player_display_name(user_id)
+        
+        # Check for Thug survival on execution
+        if is_execution and player.role == 'Thug' and user_id not in game.thug_used:
+            game.thug_used.add(user_id)
+            
+            if game.thug_mode == 'survive':
+                game.add_action_result(
+                    user_id,
+                    "💪 You were executed but your Thug ability saved you! (One-time use expended)"
+                )
+                return (
+                    f"🛡️ **{player_name} was targeted for elimination but survived!**\n"
+                    f"*(They were attacked but lived)*"
+                )
+            elif game.thug_mode == 'delayed_phase':
+                # Executed during Day X -> survive Night X -> die at Day X+1 start
+                game.delayed_deaths.append((user_id, game.day_number + 1, 'day'))
+                game.add_action_result(
+                    user_id,
+                    "💪 You were executed! Your Thug ability lets you survive one more phase before death."
+                )
+                return (
+                    f"🛡️ **{player_name} was targeted for elimination but survived!**\n"
+                    f"*(They were attacked but lived)*"
+                )
+            elif game.thug_mode == 'delayed_cycle':
+                # Executed during Day X -> survive Night X, Day X+1 -> die at Night X+1 start
+                game.delayed_deaths.append((user_id, game.day_number + 1, 'night'))
+                game.add_action_result(
+                    user_id,
+                    "💪 You were executed! Your Thug ability lets you survive one more full cycle before death."
+                )
+                return (
+                    f"🛡️ **{player_name} was targeted for elimination but survived!**\n"
+                    f"*(They were attacked but lived)*"
+                )
+        
+        # Normal elimination
         player.is_alive = False
         game.eliminated.append(user_id)
-        
-        player_name = game.get_player_display_name(user_id)
         
         # Add to dead/spec thread
         if dead_spec_thread:
@@ -272,9 +321,10 @@ class GameplayCog(commands.Cog):
         )
     
     async def _process_night_end(self, guild, game, game_channel, dead_spec_thread):
-        """Process end of night phase - handle kills."""
-        night_actions = game.night_actions.get(game.day_number, {})
-        killed_id = night_actions.get('elim_kill')
+        """Process end of night phase - handle all role actions and kills."""
+        
+        # Process all night actions (kills, protections, investigations)
+        results = await process_night_actions(guild, game)
         
         # Advance to next day
         game.day_number += 1
@@ -282,31 +332,77 @@ class GameplayCog(commands.Cog):
         game.phase_end_time = datetime.now() + timedelta(minutes=game.day_length_minutes)
         game.warnings_sent = set()
         
-        # Process kill
-        if killed_id and killed_id != 'kill_none' and killed_id in game.players:
-            player = game.players[killed_id]
+        # Build kill/death messages
+        death_messages = []
+        save_messages = []
+        
+        for target_id, role, alignment in results['deaths']:
+            player = game.players[target_id]
             player.is_alive = False
-            game.eliminated.append(killed_id)
+            game.eliminated.append(target_id)
             
-            player_name = game.get_player_display_name(killed_id)
-            kill_msg = (
+            player_name = game.get_player_display_name(target_id)
+            death_messages.append(
                 f"💀 **{player_name} was killed during the night!**\n"
-                f"They were: **{player.alignment.title()} - {player.role or 'Vanilla'}**"
+                f"They were: **{alignment.title()} - {role or 'Vanilla'}**"
             )
             
             if dead_spec_thread:
-                member = guild.get_member(killed_id)
+                member = guild.get_member(target_id)
                 if member:
                     await add_user_to_thread_safe(dead_spec_thread, member)
+        
+        for target_id in results['saves']:
+            player_name = game.get_player_display_name(target_id)
+            save_messages.append(f"🛡️ **{player_name} was attacked but survived!**")
+        
+        # Process delayed deaths (Thug delayed_cycle or delayed_phase from night attacks)
+        delayed_death_msgs = await self._process_delayed_deaths(guild, game, dead_spec_thread, 'day', game.day_number)
+        
+        # Format output
+        if death_messages:
+            kill_msg = "\n\n".join(death_messages)
+        elif save_messages:
+            kill_msg = "\n".join(save_messages)
         else:
             kill_msg = "🛡️ **No one died during the night.**"
         
+        # Add save messages if there were also deaths
+        if save_messages and death_messages:
+            kill_msg += "\n\n" + "\n".join(save_messages)
+        
+        # Add delayed death messages
+        if delayed_death_msgs:
+            kill_msg += "\n\n" + "\n\n".join(delayed_death_msgs)
+        
+        # Get Tineye messages
+        tineye_msg = format_tineye_messages(game)
+        
+        # Assign Mistborn powers for new day
+        mistborn_msgs = []
+        for player_id, player in game.players.items():
+            if player.is_alive and player.role == 'Mistborn':
+                power = assign_mistborn_power(game, player_id)
+                if power:
+                    game.add_action_result(
+                        player_id,
+                        f"🎲 **Your Mistborn power for Day {game.day_number}: {power}**\n"
+                        f"Use the `!{power.lower()}` command to use this ability."
+                    )
+        
+        # Build day start announcement
+        announcement = f"☀️ **Day {game.day_number} begins!**\n\n{kill_msg}"
+        
+        if tineye_msg:
+            announcement += f"\n{tineye_msg}"
+        
+        announcement += "\n\nDiscussion and voting are now open."
+        
         if game_channel:
-            await game_channel.send(
-                f"☀️ **Day {game.day_number} begins!**\n\n"
-                f"{kill_msg}\n\n"
-                f"Discussion and voting are now open."
-            )
+            await game_channel.send(announcement)
+        
+        # Send action results to players' GM-PM threads
+        await send_action_results(guild, game)
         
         await update_game_channel_permissions(guild, game)
         

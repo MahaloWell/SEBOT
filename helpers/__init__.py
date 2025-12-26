@@ -11,6 +11,11 @@ from helpers.utils import (
     format_time_remaining, update_game_channel_permissions, archive_game,
     add_user_to_thread_safe, close_all_pm_threads, create_pm_thread
 )
+from helpers.role_actions import (
+    process_night_actions, apply_vote_modifications, format_vote_count_with_modifications,
+    send_action_results, format_tineye_messages, assign_mistborn_power, 
+    get_current_mistborn_power, can_use_role_action
+)
 
 __all__ = [
     'Game', 'Player', 'games', 'get_game', 'create_game', 'delete_game',
@@ -18,5 +23,8 @@ __all__ = [
     'find_player_by_name', 'parse_vote_target', 'parse_kill_target', 'MatchResult',
     'get_or_create_webhook', 'post_anon_message', 'announce_vote',
     'format_time_remaining', 'update_game_channel_permissions', 'archive_game',
-    'add_user_to_thread_safe', 'close_all_pm_threads', 'create_pm_thread'
+    'add_user_to_thread_safe', 'close_all_pm_threads', 'create_pm_thread',
+    'process_night_actions', 'apply_vote_modifications', 'format_vote_count_with_modifications',
+    'send_action_results', 'format_tineye_messages', 'assign_mistborn_power',
+    'get_current_mistborn_power', 'can_use_role_action'
 ]

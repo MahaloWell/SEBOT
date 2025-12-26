@@ -151,7 +151,13 @@ class SetupCog(commands.Cog):
         allow_no_elimination="Allow voting for no elimination: True or False",
         min_votes_to_eliminate="Minimum votes to eliminate (0=plurality, -1=force RNG if 0 votes)",
         pms_enabled="Allow players to PM each other: True or False",
-        gms_see_pms="GMs/IMs can see PM threads: True or False"
+        gms_see_pms="GMs/IMs can see PM threads: True or False",
+        game_mode="Game mode: 'all' (any role) or 'tyrian' (Mistborn roles)",
+        seeker_mode="What Seeker reveals: 'role_only', 'alignment_only', or 'both'",
+        thug_mode="Thug protection: 'survive', 'delayed_phase', or 'delayed_cycle'",
+        coinshot_ammo="Coinshot kill limit (0=unlimited, positive=max kills per Coinshot)",
+        smoker_phase="When Smoker can change target: 'day', 'night', or 'both'",
+        tineye_phase="When Tineye can submit message: 'day', 'night', or 'both'"
     )
     @app_commands.choices(
         day_unit=[
@@ -178,7 +184,13 @@ class SetupCog(commands.Cog):
         allow_no_elimination: bool = None,
         min_votes_to_eliminate: int = None,
         pms_enabled: bool = None,
-        gms_see_pms: bool = None
+        gms_see_pms: bool = None,
+        game_mode: str = None,
+        seeker_mode: str = None,
+        thug_mode: str = None,
+        coinshot_ammo: int = None,
+        smoker_phase: str = None,
+        tineye_phase: str = None
     ):
         """Configure game settings."""
         game = get_game(interaction.guild_id)
@@ -277,6 +289,69 @@ class SetupCog(commands.Cog):
             game.gms_see_pms = gms_see_pms
             changes.append(f"GMs see PMs: {'Yes' if gms_see_pms else 'No'}")
         
+        if game_mode is not None:
+            if game_mode.lower() not in ['all', 'tyrian']:
+                await interaction.response.send_message(
+                    "❌ Game mode must be 'all' or 'tyrian'",
+                    ephemeral=True
+                )
+                return
+            game.game_mode = game_mode.lower()
+            changes.append(f"Game mode: {game_mode}")
+        
+        if seeker_mode is not None:
+            if seeker_mode.lower() not in ['role_only', 'alignment_only', 'both']:
+                await interaction.response.send_message(
+                    "❌ Seeker mode must be 'role_only', 'alignment_only', or 'both'",
+                    ephemeral=True
+                )
+                return
+            game.seeker_mode = seeker_mode.lower()
+            changes.append(f"Seeker mode: {seeker_mode}")
+        
+        if thug_mode is not None:
+            if thug_mode.lower() not in ['survive', 'delayed_phase', 'delayed_cycle']:
+                await interaction.response.send_message(
+                    "❌ Thug mode must be 'survive', 'delayed_phase', or 'delayed_cycle'",
+                    ephemeral=True
+                )
+                return
+            game.thug_mode = thug_mode.lower()
+            changes.append(f"Thug mode: {thug_mode}")
+        
+        if coinshot_ammo is not None:
+            if coinshot_ammo < 0:
+                await interaction.response.send_message(
+                    "❌ Coinshot ammo must be 0 (unlimited) or a positive number",
+                    ephemeral=True
+                )
+                return
+            game.coinshot_ammo = coinshot_ammo
+            if coinshot_ammo == 0:
+                changes.append("Coinshot ammo: Unlimited")
+            else:
+                changes.append(f"Coinshot ammo: {coinshot_ammo} kill(s)")
+        
+        if smoker_phase is not None:
+            if smoker_phase.lower() not in ['day', 'night', 'both']:
+                await interaction.response.send_message(
+                    "❌ Smoker phase must be 'day', 'night', or 'both'",
+                    ephemeral=True
+                )
+                return
+            game.smoker_phase = smoker_phase.lower()
+            changes.append(f"Smoker phase: {smoker_phase}")
+        
+        if tineye_phase is not None:
+            if tineye_phase.lower() not in ['day', 'night', 'both']:
+                await interaction.response.send_message(
+                    "❌ Tineye phase must be 'day', 'night', or 'both'",
+                    ephemeral=True
+                )
+                return
+            game.tineye_phase = tineye_phase.lower()
+            changes.append(f"Tineye phase: {tineye_phase}")
+        
         if not changes:
             # Show current settings
             day_display = f"{game.day_length_minutes // 60} hours" if game.day_length_minutes >= 60 else f"{game.day_length_minutes} minutes"
@@ -289,10 +364,13 @@ class SetupCog(commands.Cog):
             else:
                 min_votes_display = str(game.min_votes_to_eliminate)
             
+            coinshot_display = "Unlimited" if game.coinshot_ammo == 0 else f"{game.coinshot_ammo} kill(s)"
+            
             await interaction.response.send_message(
                 f"**⚙️ Current Game Settings:**\n"
                 f"• Game Tag: {game.game_tag or 'Not set'}\n"
                 f"• Flavor: {game.flavor_name or 'Not set'}\n"
+                f"• Game Mode: {game.game_mode}\n"
                 f"• Day length: {day_display}\n"
                 f"• Night length: {night_display}\n"
                 f"• Win condition: {game.win_condition}\n"
@@ -302,6 +380,11 @@ class SetupCog(commands.Cog):
                 f"• Minimum votes: {min_votes_display}\n"
                 f"• Player PMs: {'Enabled' if game.pms_enabled else 'Disabled'}\n"
                 f"• GMs see PMs: {'Yes' if game.gms_see_pms else 'No'}\n"
+                f"• Seeker mode: {game.seeker_mode}\n"
+                f"• Thug mode: {game.thug_mode}\n"
+                f"• Coinshot ammo: {coinshot_display}\n"
+                f"• Smoker phase: {game.smoker_phase}\n"
+                f"• Tineye phase: {game.tineye_phase}\n"
                 f"• Game channel: {'Set' if game.game_channel_id else 'Not set'}"
             )
         else:
