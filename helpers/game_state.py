@@ -28,6 +28,7 @@ class Player:
 class GameConfig:
     """General game settings - set at creation, rarely change during play."""
     anon_mode: bool = False
+    secret_votes: bool = False              # Allow voting in GM-PM thread (most recent counts)
     day_length_minutes: int = 2880          # 48 hours
     night_length_minutes: int = 1440        # 24 hours
     win_condition: str = 'parity'           # 'parity', 'overparity', 'last_man_standing'

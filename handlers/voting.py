@@ -36,9 +36,21 @@ async def handle_vote(message):
         await message.channel.send("❌ Dead players cannot vote!")
         return
     
-    if game.config.anon_mode and message.channel.id != player.private_channel_id:
-        await message.channel.send("❌ In anonymous mode, use !vote in your private GM-PM thread!")
-        return
+    # Determine if this is a private (secret) vote
+    is_private_vote = message.channel.id == player.private_channel_id
+    
+    # Check vote location rules
+    if game.config.anon_mode:
+        # Anon mode: MUST vote in GM-PM thread
+        if not is_private_vote:
+            await message.channel.send("❌ In anonymous mode, use !vote in your private GM-PM thread!")
+            return
+    elif game.config.secret_votes:
+        # Secret votes: can vote in either place (game channel or GM-PM)
+        pass  # Allow both locations
+    else:
+        # Normal mode: should vote in game channel (but we don't enforce it strictly)
+        pass
     
     # Parse target
     parts = message.content.split(maxsplit=1)
@@ -62,7 +74,14 @@ async def handle_vote(message):
     game.votes[game.day_number][voter_id] = result.target_id
     
     await message.add_reaction("✅")
-    await announce_vote(message.guild, game, voter_id, result.target_display)
+    
+    # Announce vote (or not, depending on mode and location)
+    if game.config.secret_votes and is_private_vote:
+        # Secret vote from GM-PM thread - don't announce publicly
+        await message.channel.send(f"🗳️ Secret vote recorded for **{result.target_display}**")
+    else:
+        # Normal announcement (handles anon mode internally)
+        await announce_vote(message.guild, game, voter_id, result.target_display)
 
 
 async def handle_unvote(message):
@@ -93,6 +112,14 @@ async def handle_unvote(message):
         await message.channel.send("❌ Dead players cannot vote!")
         return
     
+    # Determine if this is a private (secret) unvote
+    is_private_vote = message.channel.id == player.private_channel_id
+    
+    # Check vote location rules (same as vote)
+    if game.config.anon_mode and not is_private_vote:
+        await message.channel.send("❌ In anonymous mode, use !unvote in your private GM-PM thread!")
+        return
+    
     # Check for existing vote
     day_votes = game.get_day_votes()
     if voter_id not in day_votes:
@@ -103,4 +130,11 @@ async def handle_unvote(message):
     del game.votes[game.day_number][voter_id]
     
     await message.add_reaction("✅")
-    await announce_vote(message.guild, game, voter_id, "", is_unvote=True)
+    
+    # Announce unvote (or not, depending on mode and location)
+    if game.config.secret_votes and is_private_vote:
+        # Secret unvote from GM-PM thread - don't announce publicly
+        await message.channel.send("↩️ Secret vote removed")
+    else:
+        # Normal announcement
+        await announce_vote(message.guild, game, voter_id, "", is_unvote=True)

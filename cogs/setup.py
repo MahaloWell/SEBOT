@@ -147,6 +147,7 @@ class SetupCog(commands.Cog):
         night_unit="Time unit for night length: 'minutes' or 'hours'",
         win_condition="Elims win condition: 'parity', 'overparity', or 'last_man_standing'",
         anon_mode="Enable anonymous mode: True or False",
+        secret_votes="Allow secret voting via GM-PM thread (most recent counts): True or False",
         auto_phase_transition="Enable automatic phase transitions: True or False",
         allow_no_elimination="Allow voting for no elimination: True or False",
         min_votes_to_eliminate="Minimum votes to eliminate (0=plurality, -1=force RNG if 0 votes)",
@@ -182,6 +183,7 @@ class SetupCog(commands.Cog):
         night_unit: app_commands.Choice[str] = None,
         win_condition: str = None,
         anon_mode: bool = None,
+        secret_votes: bool = None,
         auto_phase_transition: bool = None,
         allow_no_elimination: bool = None,
         min_votes_to_eliminate: int = None,
@@ -261,6 +263,10 @@ class SetupCog(commands.Cog):
         if anon_mode is not None:
             game.config.anon_mode = anon_mode
             changes.append(f"Anonymous mode: {'Enabled' if anon_mode else 'Disabled'}")
+        
+        if secret_votes is not None:
+            game.config.secret_votes = secret_votes
+            changes.append(f"Secret votes: {'Enabled' if secret_votes else 'Disabled'}")
         
         if auto_phase_transition is not None:
             game.config.auto_phase_transition = auto_phase_transition
