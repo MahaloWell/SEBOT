@@ -41,7 +41,7 @@ class GameplayCog(commands.Cog):
             if game.status != 'active' or not game.phase_end_time:
                 continue
             
-            if not game.auto_phase_transition:
+            if not game.config.auto_phase_transition:
                 continue
             
             now = datetime.now()
@@ -51,7 +51,7 @@ class GameplayCog(commands.Cog):
             if not guild:
                 continue
             
-            game_channel = guild.get_channel(game.game_channel_id)
+            game_channel = guild.get_channel(game.channels.game_channel_id)
             if not game_channel:
                 continue
             
@@ -80,15 +80,15 @@ class GameplayCog(commands.Cog):
         if game.phase == 'Night':
             # Warn elims about pending kill
             night_actions = game.night_actions.get(game.day_number, {})
-            if not night_actions.get('elim_kill') and game.elim_discussion_thread_id:
-                elim_thread = guild.get_thread(game.elim_discussion_thread_id)
+            if not night_actions.get('elim_kill') and game.channels.elim_discussion_thread_id:
+                elim_thread = guild.get_thread(game.channels.elim_discussion_thread_id)
                 if elim_thread:
                     await elim_thread.send(
                         f"{message}\n⚠️ **Reminder:** You haven't submitted a kill yet! "
                         f"Use `!kill [player]` or `!kill none`"
                     )
         
-        elif game.phase == 'Day' and game.anon_mode:
+        elif game.is_day() and game.config.anon_mode:
             # Warn players who haven't voted
             day_votes = game.get_day_votes()
             for user_id, player in game.players.items():
@@ -98,20 +98,20 @@ class GameplayCog(commands.Cog):
                         if private_thread:
                             await private_thread.send(
                                 f"{message}\n⚠️ **Reminder:** You haven't voted yet! "
-                                f"Use `!vote [player]`{' or `!vote none`' if game.allow_no_elimination else ''}"
+                                f"Use `!vote [player]`{' or `!vote none`' if game.config.allow_no_elimination else ''}"
                             )
         
         game.warnings_sent.add(key)
     
     async def _auto_end_phase(self, guild, game):
         """Automatically end the current phase."""
-        game_channel = guild.get_channel(game.game_channel_id)
+        game_channel = guild.get_channel(game.channels.game_channel_id)
         dead_spec_thread = None
-        if game.dead_spec_thread_id:
-            dead_spec_thread = guild.get_thread(game.dead_spec_thread_id)
+        if game.channels.dead_spec_thread_id:
+            dead_spec_thread = guild.get_thread(game.channels.dead_spec_thread_id)
         
         try:
-            if game.phase == 'Day':
+            if game.is_day():
                 await self._process_day_end(guild, game, game_channel, dead_spec_thread)
             else:
                 await self._process_night_end(guild, game, game_channel, dead_spec_thread)
@@ -130,7 +130,7 @@ class GameplayCog(commands.Cog):
     async def _check_pm_closure(self, guild, game, game_channel) -> None:
         """Check if PMs should be closed after a death (role-based PM disabling)."""
         # Only matters if there are PM-enabling roles configured
-        if not game.pm_enabling_roles:
+        if not game.roles.pm_enabling_roles:
             return
         
         # Check if PMs are still available
@@ -162,8 +162,19 @@ class GameplayCog(commands.Cog):
         
         announcement += f"\n\n🌙 **Night {game.day_number} begins...**"
         
+        # Store vote history for /all_vote_counts
+        game.vote_history.append({
+            'day': game.day_number,
+            'vote_count': vote_count_msg,
+            'elimination': elimination_msg
+        })
+        
         if game_channel:
-            await game_channel.send(announcement)
+            msg = await game_channel.send(announcement)
+            try:
+                await msg.pin()
+            except:
+                pass  # May fail if too many pins
         
         # Send action results (Riot/Soothe feedback, Thug survival)
         await send_action_results(guild, game)
@@ -181,7 +192,7 @@ class GameplayCog(commands.Cog):
         
         # Transition to night
         game.phase = 'Night'
-        game.phase_end_time = datetime.now() + timedelta(minutes=game.night_length_minutes)
+        game.phase_end_time = datetime.now() + timedelta(minutes=game.config.night_length_minutes)
         game.warnings_sent = set()
     
     async def _process_delayed_deaths(self, guild, game, dead_spec_thread, phase_type, day_num):
@@ -205,7 +216,7 @@ class GameplayCog(commands.Cog):
                     player_name = game.get_player_display_name(player_id)
                     messages.append(
                         f"💀 **{player_name} has succumbed to their wounds!**\n"
-                        f"They were: **{player.alignment.title()} - {player.role or 'Vanilla'}**"
+                        f"They were: **{game.get_player_role_display(player_id)}**"
                     )
                     
                     if dead_spec_thread:
@@ -220,7 +231,7 @@ class GameplayCog(commands.Cog):
     
     async def _resolve_elimination(self, guild, game, day_votes, dead_spec_thread):
         """Resolve day phase elimination. Returns announcement message."""
-        min_votes = game.min_votes_to_eliminate
+        min_votes = game.config.min_votes_to_eliminate
         
         # Get effective votes after Riot/Soothe modifications
         effective_votes = apply_vote_modifications(game)
@@ -273,7 +284,7 @@ class GameplayCog(commands.Cog):
         if is_execution and player.role == 'Thug' and user_id not in game.thug_used:
             game.thug_used.add(user_id)
             
-            if game.thug_mode == 'survive':
+            if game.roles.thug_mode == 'survive':
                 game.add_action_result(
                     user_id,
                     "💪 You were executed but your Thug ability saved you! (One-time use expended)"
@@ -282,7 +293,7 @@ class GameplayCog(commands.Cog):
                     f"🛡️ **{player_name} was targeted for elimination but survived!**\n"
                     f"*(They were attacked but lived)*"
                 )
-            elif game.thug_mode == 'delayed_phase':
+            elif game.roles.thug_mode == 'delayed_phase':
                 # Executed during Day X -> survive Night X -> die at Day X+1 start
                 game.delayed_deaths.append((user_id, game.day_number + 1, 'day'))
                 game.add_action_result(
@@ -293,7 +304,7 @@ class GameplayCog(commands.Cog):
                     f"🛡️ **{player_name} was targeted for elimination but survived!**\n"
                     f"*(They were attacked but lived)*"
                 )
-            elif game.thug_mode == 'delayed_cycle':
+            elif game.roles.thug_mode == 'delayed_cycle':
                 # Executed during Day X -> survive Night X, Day X+1 -> die at Night X+1 start
                 game.delayed_deaths.append((user_id, game.day_number + 1, 'night'))
                 game.add_action_result(
@@ -317,7 +328,7 @@ class GameplayCog(commands.Cog):
         
         return (
             f"💀 **{player_name} has been eliminated!**\n"
-            f"They were: **{player.alignment.title()} - {player.role or 'Vanilla'}**"
+            f"They were: **{game.get_player_role_display(user_id)}**"
         )
     
     async def _process_night_end(self, guild, game, game_channel, dead_spec_thread):
@@ -329,7 +340,7 @@ class GameplayCog(commands.Cog):
         # Advance to next day
         game.day_number += 1
         game.phase = 'Day'
-        game.phase_end_time = datetime.now() + timedelta(minutes=game.day_length_minutes)
+        game.phase_end_time = datetime.now() + timedelta(minutes=game.config.day_length_minutes)
         game.warnings_sent = set()
         
         # Build kill/death messages
@@ -342,9 +353,10 @@ class GameplayCog(commands.Cog):
             game.eliminated.append(target_id)
             
             player_name = game.get_player_display_name(target_id)
+            faction_name = game.get_faction_name(alignment)
             death_messages.append(
                 f"💀 **{player_name} was killed during the night!**\n"
-                f"They were: **{alignment.title()} - {role or 'Vanilla'}**"
+                f"They were: **{faction_name} {role or 'Vanilla'}**"
             )
             
             if dead_spec_thread:
@@ -399,7 +411,11 @@ class GameplayCog(commands.Cog):
         announcement += "\n\nDiscussion and voting are now open."
         
         if game_channel:
-            await game_channel.send(announcement)
+            msg = await game_channel.send(announcement)
+            try:
+                await msg.pin()
+            except:
+                pass  # May fail if too many pins
         
         # Send action results to players' GM-PM threads
         await send_action_results(guild, game)
@@ -435,9 +451,10 @@ class GameplayCog(commands.Cog):
                         f"Archiving game channels..."
                     )
             else:
+                faction_name = game.get_faction_name(winner)
                 await game_channel.send(
                     f"🎊 **GAME OVER!**\n"
-                    f"**{winner.title()} has won!**\n\n"
+                    f"**{faction_name} has won!**\n\n"
                     f"Archiving game channels..."
                 )
         
@@ -454,7 +471,7 @@ class GameplayCog(commands.Cog):
         game = get_game(interaction.guild_id)
         
         time_left = format_time_remaining(game.phase_end_time)
-        auto_status = "🤖 Automatic" if game.auto_phase_transition else "👤 Manual"
+        auto_status = "🤖 Automatic" if game.config.auto_phase_transition else "👤 Manual"
         
         await interaction.response.send_message(
             f"⏰ **Current Phase:** {game.phase} {game.day_number}\n"
@@ -468,7 +485,7 @@ class GameplayCog(commands.Cog):
         """Display current vote count."""
         game = get_game(interaction.guild_id)
         
-        if game.phase != 'Day':
+        if not game.is_day():
             await interaction.response.send_message("❌ No voting during night phase!", ephemeral=True)
             return
         
@@ -499,6 +516,67 @@ class GameplayCog(commands.Cog):
             f"{chr(10).join(vote_lines)}\n\n"
             f"Total votes: {len(day_votes)}/{alive_count}"
         )
+    
+    @app_commands.command(name="all_vote_counts", description="Show all vote results from this game")
+    @require_game()
+    async def all_vote_counts(self, interaction: discord.Interaction):
+        """Display all historical vote counts from this game."""
+        game = get_game(interaction.guild_id)
+        
+        if not game.vote_history:
+            await interaction.response.send_message(
+                "📊 No vote results yet. Vote history is recorded at the end of each day.",
+                ephemeral=True
+            )
+            return
+        
+        # Build output with dead player annotations
+        lines = ["📊 **All Vote Results**\n"]
+        
+        for record in game.vote_history:
+            day = record['day']
+            vote_count = record['vote_count']
+            elimination = record['elimination']
+            
+            lines.append(f"**━━━ Day {day} ━━━**")
+            
+            # Annotate dead players in vote count with their role/alignment
+            annotated_vote_count = self._annotate_dead_players(game, vote_count)
+            lines.append(annotated_vote_count)
+            lines.append("")
+            lines.append(elimination)
+            lines.append("")
+        
+        response = "\n".join(lines)
+        
+        # Split if too long
+        if len(response) > 1900:
+            await interaction.response.send_message(
+                response[:1900] + "\n\n*...truncated (too many days)*",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(response, ephemeral=True)
+    
+    def _annotate_dead_players(self, game, vote_count_text: str) -> str:
+        """Add (FactionName RoleName) after dead players in vote count text."""
+        result = vote_count_text
+        
+        for player_id, player in game.players.items():
+            if not player.is_alive:
+                # Get the display name that would appear in the vote count
+                display_name = game.get_player_display_name(player_id)
+                role_display = game.get_player_role_display(player_id)
+                
+                # Replace the player name with annotated version
+                # Be careful to not replace partial matches
+                annotated = f"{display_name} ({role_display})"
+                
+                # Only replace if not already annotated
+                if f"{display_name} (" not in result:
+                    result = result.replace(display_name, annotated)
+        
+        return result
     
     @app_commands.command(name="clear_votes", description="[GM/IM] Clear all votes for current day")
     @gm_only()

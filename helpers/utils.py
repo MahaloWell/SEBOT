@@ -30,7 +30,7 @@ def format_time_remaining(end_time: Optional[datetime]) -> str:
 
 async def update_game_channel_permissions(guild: discord.Guild, game: Game) -> None:
     """Update game channel permissions based on living players and game mode."""
-    game_channel = guild.get_channel(game.game_channel_id)
+    game_channel = guild.get_channel(game.channels.game_channel_id)
     if not game_channel:
         return
     
@@ -64,7 +64,7 @@ async def update_game_channel_permissions(guild: discord.Guild, game: Game) -> N
             )
     
     # In non-anon mode, living players can post
-    if not game.anon_mode:
+    if not game.config.anon_mode:
         for user_id, player in game.players.items():
             member = guild.get_member(user_id)
             if member and player.is_alive:
@@ -95,7 +95,7 @@ async def close_all_pm_threads(guild: discord.Guild, game: 'Game') -> int:
     """
     closed_count = 0
     
-    for thread_id in game.pm_threads.values():
+    for thread_id in game.channels.pm_threads.values():
         thread = guild.get_thread(thread_id)
         if thread:
             try:
@@ -120,7 +120,7 @@ async def create_pm_thread(
     """
     from helpers.permissions import get_gm_role, get_im_role
     
-    game_channel = guild.get_channel(game.game_channel_id)
+    game_channel = guild.get_channel(game.channels.game_channel_id)
     if not game_channel:
         return None
     
@@ -131,7 +131,7 @@ async def create_pm_thread(
         return None
     
     # Generate thread name
-    if game.anon_mode:
+    if game.config.anon_mode:
         name1 = player1.anon_identity or "Player1"
         name2 = player2.anon_identity or "Player2"
     else:
@@ -158,7 +158,7 @@ async def create_pm_thread(
             await add_user_to_thread_safe(pm_thread, member2)
         
         # Add GMs/IMs if configured
-        if game.gms_see_pms:
+        if game.config.gms_see_pms:
             gm_role = get_gm_role(guild)
             im_role = get_im_role(guild)
             
@@ -169,10 +169,10 @@ async def create_pm_thread(
         
         # Store thread reference
         key = game.get_pm_thread_key(player1_id, player2_id)
-        game.pm_threads[key] = pm_thread.id
+        game.channels.pm_threads[key] = pm_thread.id
         
         # Send welcome message
-        gm_note = " GMs/IMs can see this conversation." if game.gms_see_pms else ""
+        gm_note = " GMs/IMs can see this conversation." if game.config.gms_see_pms else ""
         await pm_thread.send(
             f"💬 **Private conversation between {name1} and {name2}**\n"
             f"You can chat privately here.{gm_note}"
@@ -193,10 +193,10 @@ async def archive_game(guild: discord.Guild, game: Game) -> tuple[int, str]:
     Returns:
         Tuple of (channels archived count, archive category name)
     """
-    if not game.game_channel_id:
+    if not game.channels.game_channel_id:
         return 0, "No channels to archive"
     
-    game_channel = guild.get_channel(game.game_channel_id)
+    game_channel = guild.get_channel(game.channels.game_channel_id)
     if not game_channel:
         return 0, "Game channel not found"
     

@@ -14,6 +14,7 @@ from helpers.utils import (
     update_game_channel_permissions, archive_game, 
     add_user_to_thread_safe, format_time_remaining, close_all_pm_threads
 )
+from helpers.role_actions import assign_mistborn_power
 
 
 class AdminCog(commands.Cog):
@@ -81,16 +82,16 @@ class AdminCog(commands.Cog):
         game.eliminated.append(player.id)
         
         # Add to dead/spec thread
-        if game.dead_spec_thread_id:
-            dead_spec_thread = interaction.guild.get_thread(game.dead_spec_thread_id)
+        if game.channels.dead_spec_thread_id:
+            dead_spec_thread = interaction.guild.get_thread(game.channels.dead_spec_thread_id)
             if dead_spec_thread:
                 await add_user_to_thread_safe(dead_spec_thread, player)
         
         await update_game_channel_permissions(interaction.guild, game)
         
         # Check if PMs should be closed
-        if game.pm_enabling_roles and not game.are_pms_available():
-            game_channel = interaction.guild.get_channel(game.game_channel_id)
+        if game.roles.pm_enabling_roles and not game.are_pms_available():
+            game_channel = interaction.guild.get_channel(game.channels.game_channel_id)
             closed_count = await close_all_pm_threads(interaction.guild, game)
             if closed_count > 0 and game_channel:
                 await game_channel.send(
@@ -106,7 +107,7 @@ class AdminCog(commands.Cog):
         # Check win
         winner = game.check_win_condition()
         if winner:
-            game_channel = interaction.guild.get_channel(game.game_channel_id)
+            game_channel = interaction.guild.get_channel(game.channels.game_channel_id)
             if game_channel:
                 if winner == 'last_standing':
                     survivors = [p for p in game.players.values() if p.is_alive]
@@ -185,7 +186,7 @@ class AdminCog(commands.Cog):
             )
             return
         
-        if not game.game_channel_id:
+        if not game.channels.game_channel_id:
             await interaction.response.send_message(
                 "⚠️ No game channel set! Use `/create_game_channel` or `/set_game_channel` first.",
                 ephemeral=True
@@ -205,7 +206,7 @@ class AdminCog(commands.Cog):
         await interaction.response.defer()
         
         guild = interaction.guild
-        game_channel = guild.get_channel(game.game_channel_id)
+        game_channel = guild.get_channel(game.channels.game_channel_id)
         
         if not game_channel:
             await interaction.followup.send("❌ Game channel not found!")
@@ -222,7 +223,7 @@ class AdminCog(commands.Cog):
             type=discord.ChannelType.private_thread,
             invitable=False
         )
-        game.dead_spec_thread_id = dead_spec_thread.id
+        game.channels.dead_spec_thread_id = dead_spec_thread.id
         
         # Add GM/IM to dead/spec
         for role in [gm_role, im_role]:
@@ -256,7 +257,7 @@ class AdminCog(commands.Cog):
                 type=discord.ChannelType.private_thread,
                 invitable=False
             )
-            game.elim_discussion_thread_id = elim_thread.id
+            game.channels.elim_discussion_thread_id = elim_thread.id
             
             for member in elim_members:
                 if member:
@@ -304,24 +305,24 @@ class AdminCog(commands.Cog):
             if player.alignment:
                 welcome_parts.append(
                     f"\n\n🎭 **Your Role:**\n"
-                    f"**Alignment:** {player.alignment.title()}\n"
+                    f"**Alignment:** {game.get_faction_name(player.alignment)}\n"
                     f"**Role:** {player.role or 'Vanilla'}"
                 )
             
-            if game.anon_mode and player.anon_identity:
+            if game.config.anon_mode and player.anon_identity:
                 welcome_parts.append(f"\n\n🎭 **Your Anonymous Identity:** {player.anon_identity}")
             
-            if player.alignment == 'elims' and game.elim_discussion_thread_id:
-                elim_thread = guild.get_thread(game.elim_discussion_thread_id)
+            if player.alignment == 'elims' and game.channels.elim_discussion_thread_id:
+                elim_thread = guild.get_thread(game.channels.elim_discussion_thread_id)
                 if elim_thread:
-                    welcome_parts.append(f"\n\n🔴 **Elim Discussion:** {elim_thread.mention}")
+                    welcome_parts.append(f"\n\n🔴 **{game.config.elim_name} Discussion:** {elim_thread.mention}")
             
             # Commands
             vote_cmd = "`!vote [player]`"
-            if game.allow_no_elimination:
+            if game.config.allow_no_elimination:
                 vote_cmd += " or `!vote none`"
             
-            if game.anon_mode:
+            if game.config.anon_mode:
                 welcome_parts.append(
                     f"\n\n**Commands (use in this thread):**\n"
                     f"• `!say [message]` - Post anonymously\n"
@@ -352,7 +353,19 @@ class AdminCog(commands.Cog):
         game.status = 'active'
         game.phase = 'Day'
         game.day_number = 1
-        game.phase_end_time = datetime.now() + timedelta(minutes=game.day_length_minutes)
+        game.phase_end_time = datetime.now() + timedelta(minutes=game.config.day_length_minutes)
+        
+        # Assign Mistborn powers for Day 1
+        for user_id, player in game.players.items():
+            if player.role == 'Mistborn':
+                power = assign_mistborn_power(game, user_id)
+                if power:
+                    private_thread = guild.get_thread(player.private_channel_id)
+                    if private_thread:
+                        await private_thread.send(
+                            f"🎲 **Your Mistborn power for Day 1: {power}**\n"
+                            f"Use the `!{power.lower()}` command to use this ability."
+                        )
         
         # Announce
         if game_channel:
@@ -363,7 +376,7 @@ class AdminCog(commands.Cog):
                 f"🎮 **{game_name} has begun!**\n"
                 f"**Phase:** Day 1\n"
                 f"**Players:** {len(game.players)} ({village_count} Village, {elim_count} Elim{'s' if elim_count != 1 else ''})\n"
-                f"**Mode:** {'Anonymous' if game.anon_mode else 'Standard'}\n"
+                f"**Mode:** {'Anonymous' if game.config.anon_mode else 'Standard'}\n"
                 f"**Phase ends:** {format_time_remaining(game.phase_end_time)}\n\n"
                 f"Good luck!"
             )
@@ -371,7 +384,7 @@ class AdminCog(commands.Cog):
         await interaction.followup.send(
             f"✅ **Game Started!**\n"
             f"Created {len(created_threads)} private threads.\n"
-            + (f"Created elim discussion thread.\n" if game.elim_discussion_thread_id else "")
+            + (f"Created elim discussion thread.\n" if game.channels.elim_discussion_thread_id else "")
             + f"Created dead/spec thread.\n"
             + f"All threads are under {game_channel.mention}!"
         )

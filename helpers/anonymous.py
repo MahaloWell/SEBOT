@@ -45,7 +45,7 @@ async def post_anon_message(
     if not player or not player.anon_identity:
         return False
     
-    game_channel = guild.get_channel(game.game_channel_id)
+    game_channel = guild.get_channel(game.channels.game_channel_id)
     if not game_channel:
         return False
     
@@ -96,9 +96,9 @@ async def announce_vote(
         message = f"🗳️ **Votes for {target_display}**"
         public_message = f"🗳️ **{voter_display}** has voted for **{target_display}**"
     
-    if game.anon_mode:
+    if game.config.anon_mode:
         await post_anon_message(guild, game, voter_id, message)
     else:
-        game_channel = guild.get_channel(game.game_channel_id)
+        game_channel = guild.get_channel(game.channels.game_channel_id)
         if game_channel:
             await game_channel.send(public_message)

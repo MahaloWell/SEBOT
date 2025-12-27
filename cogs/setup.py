@@ -68,7 +68,7 @@ class SetupCog(commands.Cog):
         """Bot creates the game channel automatically."""
         game = get_game(interaction.guild_id)
         
-        if game.game_channel_id:
+        if game.channels.game_channel_id:
             await interaction.response.send_message("⚠️ Game channel already set!", ephemeral=True)
             return
         
@@ -118,7 +118,7 @@ class SetupCog(commands.Cog):
             topic=f"{game.flavor_name or 'Elimination Game'} - Discussion Channel"
         )
         
-        game.game_channel_id = game_channel.id
+        game.channels.game_channel_id = game_channel.id
         
         await interaction.followup.send(
             f"✅ Created game channel: {game_channel.mention}\n"
@@ -132,7 +132,7 @@ class SetupCog(commands.Cog):
     async def set_game_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         """Set which channel is the main game channel."""
         game = get_game(interaction.guild_id)
-        game.game_channel_id = channel.id
+        game.channels.game_channel_id = channel.id
         
         await interaction.response.send_message(
             f"✅ Game channel set to {channel.mention}\n"
@@ -152,6 +152,8 @@ class SetupCog(commands.Cog):
         min_votes_to_eliminate="Minimum votes to eliminate (0=plurality, -1=force RNG if 0 votes)",
         pms_enabled="Allow players to PM each other: True or False",
         gms_see_pms="GMs/IMs can see PM threads: True or False",
+        village_name="Display name for village faction (e.g., 'Village', 'Town')",
+        elim_name="Display name for eliminator faction (e.g., 'Elims', 'Spiked', 'Mafia')",
         game_mode="Game mode: 'all' (any role) or 'tyrian' (Mistborn roles)",
         seeker_mode="What Seeker reveals: 'role_only', 'alignment_only', or 'both'",
         thug_mode="Thug protection: 'survive', 'delayed_phase', or 'delayed_cycle'",
@@ -185,6 +187,8 @@ class SetupCog(commands.Cog):
         min_votes_to_eliminate: int = None,
         pms_enabled: bool = None,
         gms_see_pms: bool = None,
+        village_name: str = None,
+        elim_name: str = None,
         game_mode: str = None,
         seeker_mode: str = None,
         thug_mode: str = None,
@@ -198,7 +202,7 @@ class SetupCog(commands.Cog):
         # Allow changing auto_phase_transition during active game
         if game.status != 'setup':
             if auto_phase_transition is not None:
-                game.auto_phase_transition = auto_phase_transition
+                game.config.auto_phase_transition = auto_phase_transition
                 await interaction.response.send_message(
                     f"✅ Automatic phase transitions: {'Enabled' if auto_phase_transition else 'Disabled'}"
                 )
@@ -222,10 +226,10 @@ class SetupCog(commands.Cog):
                 return
             
             if day_unit.value == "hours":
-                game.day_length_minutes = day_length * 60
+                game.config.day_length_minutes = day_length * 60
                 changes.append(f"Day length: {day_length} hours")
             else:
-                game.day_length_minutes = day_length
+                game.config.day_length_minutes = day_length
                 changes.append(f"Day length: {day_length} minutes")
         
         # Night length
@@ -238,10 +242,10 @@ class SetupCog(commands.Cog):
                 return
             
             if night_unit.value == "hours":
-                game.night_length_minutes = night_length * 60
+                game.config.night_length_minutes = night_length * 60
                 changes.append(f"Night length: {night_length} hours")
             else:
-                game.night_length_minutes = night_length
+                game.config.night_length_minutes = night_length
                 changes.append(f"Night length: {night_length} minutes")
         
         if win_condition is not None:
@@ -251,19 +255,19 @@ class SetupCog(commands.Cog):
                     ephemeral=True
                 )
                 return
-            game.win_condition = win_condition.lower()
+            game.config.win_condition = win_condition.lower()
             changes.append(f"Win condition: {win_condition}")
         
         if anon_mode is not None:
-            game.anon_mode = anon_mode
+            game.config.anon_mode = anon_mode
             changes.append(f"Anonymous mode: {'Enabled' if anon_mode else 'Disabled'}")
         
         if auto_phase_transition is not None:
-            game.auto_phase_transition = auto_phase_transition
+            game.config.auto_phase_transition = auto_phase_transition
             changes.append(f"Auto phase transitions: {'Enabled' if auto_phase_transition else 'Disabled'}")
         
         if allow_no_elimination is not None:
-            game.allow_no_elimination = allow_no_elimination
+            game.config.allow_no_elimination = allow_no_elimination
             changes.append(f"Allow no elimination: {'Enabled' if allow_no_elimination else 'Disabled'}")
         
         if min_votes_to_eliminate is not None:
@@ -273,7 +277,7 @@ class SetupCog(commands.Cog):
                     ephemeral=True
                 )
                 return
-            game.min_votes_to_eliminate = min_votes_to_eliminate
+            game.config.min_votes_to_eliminate = min_votes_to_eliminate
             if min_votes_to_eliminate == 0:
                 changes.append("Minimum votes: Plurality (highest count wins)")
             elif min_votes_to_eliminate == -1:
@@ -282,12 +286,20 @@ class SetupCog(commands.Cog):
                 changes.append(f"Minimum votes: {min_votes_to_eliminate}")
         
         if pms_enabled is not None:
-            game.pms_enabled = pms_enabled
+            game.config.pms_enabled = pms_enabled
             changes.append(f"Player PMs: {'Enabled' if pms_enabled else 'Disabled'}")
         
         if gms_see_pms is not None:
-            game.gms_see_pms = gms_see_pms
+            game.config.gms_see_pms = gms_see_pms
             changes.append(f"GMs see PMs: {'Yes' if gms_see_pms else 'No'}")
+        
+        if village_name is not None:
+            game.config.village_name = village_name
+            changes.append(f"Village faction name: {village_name}")
+        
+        if elim_name is not None:
+            game.config.elim_name = elim_name
+            changes.append(f"Eliminator faction name: {elim_name}")
         
         if game_mode is not None:
             if game_mode.lower() not in ['all', 'tyrian']:
@@ -296,7 +308,7 @@ class SetupCog(commands.Cog):
                     ephemeral=True
                 )
                 return
-            game.game_mode = game_mode.lower()
+            game.roles.game_mode = game_mode.lower()
             changes.append(f"Game mode: {game_mode}")
         
         if seeker_mode is not None:
@@ -306,7 +318,7 @@ class SetupCog(commands.Cog):
                     ephemeral=True
                 )
                 return
-            game.seeker_mode = seeker_mode.lower()
+            game.roles.seeker_mode = seeker_mode.lower()
             changes.append(f"Seeker mode: {seeker_mode}")
         
         if thug_mode is not None:
@@ -316,7 +328,7 @@ class SetupCog(commands.Cog):
                     ephemeral=True
                 )
                 return
-            game.thug_mode = thug_mode.lower()
+            game.roles.thug_mode = thug_mode.lower()
             changes.append(f"Thug mode: {thug_mode}")
         
         if coinshot_ammo is not None:
@@ -326,7 +338,7 @@ class SetupCog(commands.Cog):
                     ephemeral=True
                 )
                 return
-            game.coinshot_ammo = coinshot_ammo
+            game.roles.coinshot_ammo = coinshot_ammo
             if coinshot_ammo == 0:
                 changes.append("Coinshot ammo: Unlimited")
             else:
@@ -339,7 +351,7 @@ class SetupCog(commands.Cog):
                     ephemeral=True
                 )
                 return
-            game.smoker_phase = smoker_phase.lower()
+            game.roles.smoker_phase = smoker_phase.lower()
             changes.append(f"Smoker phase: {smoker_phase}")
         
         if tineye_phase is not None:
@@ -349,43 +361,43 @@ class SetupCog(commands.Cog):
                     ephemeral=True
                 )
                 return
-            game.tineye_phase = tineye_phase.lower()
+            game.roles.tineye_phase = tineye_phase.lower()
             changes.append(f"Tineye phase: {tineye_phase}")
         
         if not changes:
             # Show current settings
-            day_display = f"{game.day_length_minutes // 60} hours" if game.day_length_minutes >= 60 else f"{game.day_length_minutes} minutes"
-            night_display = f"{game.night_length_minutes // 60} hours" if game.night_length_minutes >= 60 else f"{game.night_length_minutes} minutes"
+            day_display = f"{game.config.day_length_minutes // 60} hours" if game.config.day_length_minutes >= 60 else f"{game.config.day_length_minutes} minutes"
+            night_display = f"{game.config.night_length_minutes // 60} hours" if game.config.night_length_minutes >= 60 else f"{game.config.night_length_minutes} minutes"
             
-            if game.min_votes_to_eliminate == 0:
+            if game.config.min_votes_to_eliminate == 0:
                 min_votes_display = "Plurality (highest count wins)"
-            elif game.min_votes_to_eliminate == -1:
+            elif game.config.min_votes_to_eliminate == -1:
                 min_votes_display = "Force RNG if no votes"
             else:
-                min_votes_display = str(game.min_votes_to_eliminate)
+                min_votes_display = str(game.config.min_votes_to_eliminate)
             
-            coinshot_display = "Unlimited" if game.coinshot_ammo == 0 else f"{game.coinshot_ammo} kill(s)"
+            coinshot_display = "Unlimited" if game.roles.coinshot_ammo == 0 else f"{game.roles.coinshot_ammo} kill(s)"
             
             await interaction.response.send_message(
                 f"**⚙️ Current Game Settings:**\n"
                 f"• Game Tag: {game.game_tag or 'Not set'}\n"
                 f"• Flavor: {game.flavor_name or 'Not set'}\n"
-                f"• Game Mode: {game.game_mode}\n"
+                f"• Game Mode: {game.roles.game_mode}\n"
                 f"• Day length: {day_display}\n"
                 f"• Night length: {night_display}\n"
-                f"• Win condition: {game.win_condition}\n"
-                f"• Anonymous mode: {'Enabled' if game.anon_mode else 'Disabled'}\n"
-                f"• Auto phase transitions: {'Enabled' if game.auto_phase_transition else 'Disabled'}\n"
-                f"• Allow no elimination: {'Enabled' if game.allow_no_elimination else 'Disabled'}\n"
+                f"• Win condition: {game.config.win_condition}\n"
+                f"• Anonymous mode: {'Enabled' if game.config.anon_mode else 'Disabled'}\n"
+                f"• Auto phase transitions: {'Enabled' if game.config.auto_phase_transition else 'Disabled'}\n"
+                f"• Allow no elimination: {'Enabled' if game.config.allow_no_elimination else 'Disabled'}\n"
                 f"• Minimum votes: {min_votes_display}\n"
-                f"• Player PMs: {'Enabled' if game.pms_enabled else 'Disabled'}\n"
-                f"• GMs see PMs: {'Yes' if game.gms_see_pms else 'No'}\n"
-                f"• Seeker mode: {game.seeker_mode}\n"
-                f"• Thug mode: {game.thug_mode}\n"
+                f"• Player PMs: {'Enabled' if game.config.pms_enabled else 'Disabled'}\n"
+                f"• GMs see PMs: {'Yes' if game.config.gms_see_pms else 'No'}\n"
+                f"• Seeker mode: {game.roles.seeker_mode}\n"
+                f"• Thug mode: {game.roles.thug_mode}\n"
                 f"• Coinshot ammo: {coinshot_display}\n"
-                f"• Smoker phase: {game.smoker_phase}\n"
-                f"• Tineye phase: {game.tineye_phase}\n"
-                f"• Game channel: {'Set' if game.game_channel_id else 'Not set'}"
+                f"• Smoker phase: {game.roles.smoker_phase}\n"
+                f"• Tineye phase: {game.roles.tineye_phase}\n"
+                f"• Game channel: {'Set' if game.channels.game_channel_id else 'Not set'}"
             )
         else:
             await interaction.response.send_message(
@@ -403,7 +415,7 @@ class SetupCog(commands.Cog):
         game = get_game(interaction.guild_id)
         
         if not roles or roles.strip() == "":
-            game.pm_enabling_roles = []
+            game.roles.pm_enabling_roles = []
             await interaction.response.send_message(
                 "✅ PM-enabling roles cleared. PMs will always be available (if enabled)."
             )
@@ -411,7 +423,7 @@ class SetupCog(commands.Cog):
         
         # Parse comma-separated roles
         role_list = [r.strip() for r in roles.split(',') if r.strip()]
-        game.pm_enabling_roles = role_list
+        game.roles.pm_enabling_roles = role_list
         
         await interaction.response.send_message(
             f"✅ PM-enabling roles set to: **{', '.join(role_list)}**\n"

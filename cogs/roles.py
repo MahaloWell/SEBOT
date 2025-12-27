@@ -6,6 +6,10 @@ from discord.ext import commands
 import random
 
 from data.identities import ANON_IDENTITIES
+from data.roles import (
+    ROLE_DEFINITIONS, get_available_roles, get_role_name_normalized,
+    get_role_help, GAME_MODES
+)
 from helpers.game_state import get_game
 from helpers.permissions import gm_only, require_game
 
@@ -16,11 +20,34 @@ class RolesCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
     
+    @app_commands.command(name="roles", description="List available roles for the current game mode")
+    async def list_roles(self, interaction: discord.Interaction):
+        """List all roles available in the current game mode."""
+        game = get_game(interaction.guild_id)
+        game_mode = game.roles.game_mode if game else 'all'
+        
+        available = get_available_roles(game_mode)
+        
+        lines = [f"**📜 Available Roles ({game_mode.title()} Mode)**\n"]
+        
+        for role_name in available:
+            role_info = ROLE_DEFINITIONS.get(role_name, {})
+            desc = role_info.get('description', 'No description.')
+            commands_list = role_info.get('commands', [])
+            
+            role_line = f"**{role_name}**"
+            if commands_list:
+                role_line += f" - `{commands_list[0]}`"
+            role_line += f"\n  {desc}"
+            lines.append(role_line)
+        
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+    
     @app_commands.command(name="assign_role", description="[GM/IM] Secretly assign alignment and role to a player")
     @app_commands.describe(
         player="The player to assign",
         alignment="Village or Elims",
-        role="Specific role (e.g., Vanilla, Godfather, Doctor, Cop)"
+        role="Specific role (e.g., Vanilla, Coinshot, Lurcher, Tineye)"
     )
     @app_commands.choices(alignment=[
         app_commands.Choice(name="Village", value="village"),
@@ -45,11 +72,21 @@ class RolesCog(commands.Cog):
             )
             return
         
+        # Normalize role name (case-insensitive)
+        normalized_role = get_role_name_normalized(role)
+        if not normalized_role:
+            available = get_available_roles(game.roles.game_mode)
+            await interaction.response.send_message(
+                f"❌ Unknown role '{role}'. Use `/roles` to see available roles.",
+                ephemeral=True
+            )
+            return
+        
         game.players[player.id].alignment = alignment.value
-        game.players[player.id].role = role
+        game.players[player.id].role = normalized_role
         
         await interaction.response.send_message(
-            f"✅ Assigned **{alignment.name} - {role}** to {player.mention}",
+            f"✅ Assigned **{alignment.name} - {normalized_role}** to {player.mention}",
             ephemeral=True
         )
         
@@ -60,7 +97,7 @@ class RolesCog(commands.Cog):
                 await private_thread.send(
                     f"🎭 **Your Role Assignment:**\n"
                     f"**Alignment:** {alignment.name}\n"
-                    f"**Role:** {role}"
+                    f"**Role:** {normalized_role}"
                 )
     
     @app_commands.command(name="randomize_alignments", description="[GM/IM] Randomly assign village/elim alignments")
@@ -119,7 +156,7 @@ class RolesCog(commands.Cog):
         """Randomly assign anon identities."""
         game = get_game(interaction.guild_id)
         
-        if not game.anon_mode:
+        if not game.config.anon_mode:
             await interaction.response.send_message(
                 "❌ Anonymous mode is not enabled! Use `/config_game anon_mode:True`",
                 ephemeral=True
@@ -160,7 +197,7 @@ class RolesCog(commands.Cog):
         """Manually assign a specific anon identity."""
         game = get_game(interaction.guild_id)
         
-        if not game.anon_mode:
+        if not game.config.anon_mode:
             await interaction.response.send_message(
                 "❌ Anonymous mode is not enabled!",
                 ephemeral=True

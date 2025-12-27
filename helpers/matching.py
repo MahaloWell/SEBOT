@@ -49,7 +49,7 @@ def find_player_by_name(
         if alive_only and not player.is_alive:
             continue
         
-        if game.anon_mode:
+        if game.config.anon_mode:
             # Anonymous mode: match against anon identity
             if not player.anon_identity:
                 continue
@@ -143,7 +143,7 @@ def parse_vote_target(game: Game, target_str: str) -> MatchResult:
     
     # Handle "vote none"
     if target_name in ['none', 'no one', 'no elimination', 'no lynch']:
-        if not game.allow_no_elimination:
+        if not game.config.allow_no_elimination:
             return MatchResult(
                 success=False,
                 error="❌ Voting for no elimination is not allowed in this game!"

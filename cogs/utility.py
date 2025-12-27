@@ -67,32 +67,48 @@ class UtilityCog(commands.Cog):
 • `/leave_game` - Leave before game starts
 • `/spectate_game` - Spectate the active game
 • `/player_list` - View all players
+• `/roles` - View available roles for this game mode
 • `/vote_count` - See current vote tallies
+• `/all_vote_counts` - See all vote results from this game
 • `/time_remaining` - Check phase time
 • `/command_list` - Show this list
-
-**💬 Text Commands (in private thread):**
 """
         
-        # Build text command list based on game state
-        if game and game.anon_mode:
-            player_commands += "• `!say [message]` - Post anonymously\n"
+        # Text Commands section
+        text_commands = "\n**💬 Text Commands (use in your GM-PM thread):**\n"
+        text_commands += "• `!actions` - View your role's abilities and commands\n"
+        
+        if game and game.config.anon_mode:
+            text_commands += "• `!say [message]` - Post anonymously in game channel\n"
         
         vote_cmd = "• `!vote [player]`"
-        if game and game.allow_no_elimination:
+        if game and game.config.allow_no_elimination:
             vote_cmd += " or `!vote none`"
         vote_cmd += " - Vote during day\n"
-        player_commands += vote_cmd
-        player_commands += "• `!unvote` - Remove your current vote\n"
+        text_commands += vote_cmd
+        text_commands += "• `!unvote` - Remove your current vote\n"
         
-        # PM command
-        if game and game.pms_enabled:
-            player_commands += "• `!pm [player]` - Start a private conversation\n"
+        if game and game.config.pms_enabled:
+            text_commands += "• `!pm [player]` - Start a private conversation\n"
         
         # Elim commands
         if game and interaction.user.id in game.players:
             if game.players[interaction.user.id].alignment == 'elims':
-                player_commands += "• `!kill [player]` or `!kill none` - Night kill (night phase)\n"
+                text_commands += "• `!kill [player]` or `!kill none` - Night kill\n"
+        
+        # Role action commands
+        role_commands = """
+**⚔️ Role Action Commands (use in GM-PM thread):**
+• `!coinshot [player]` or `!cs [player]` - Coinshot kill (night)
+• `!lurcher [player]` or `!lurch [player]` - Lurcher protect (night)
+• `!seek [player]` - Seeker investigate (night)
+• `!riot [player] to [target]` - Rioter redirect vote (day)
+• `!soothe [player]` - Soother cancel vote (day)
+• `!smoke [player]` / `!smoke+` / `!smoke-` - Smoker protection
+• `!tin [message]` or `!tinpost [message]` - Tineye anonymous message
+
+*Use `!actions` in your GM-PM thread to see commands for YOUR role.*
+"""
         
         # Utility
         utility_commands = """
@@ -102,9 +118,9 @@ class UtilityCog(commands.Cog):
 """
         
         if is_gm:
-            response = gm_commands + player_commands + utility_commands
+            response = gm_commands + player_commands + text_commands + role_commands + utility_commands
         else:
-            response = player_commands + utility_commands
+            response = player_commands + text_commands + role_commands + utility_commands
         
         await interaction.response.send_message(response, ephemeral=True)
 

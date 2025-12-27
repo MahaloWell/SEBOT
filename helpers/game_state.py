@@ -25,9 +25,53 @@ class Player:
 
 
 @dataclass
+class GameConfig:
+    """General game settings - set at creation, rarely change during play."""
+    anon_mode: bool = False
+    day_length_minutes: int = 2880          # 48 hours
+    night_length_minutes: int = 1440        # 24 hours
+    win_condition: str = 'parity'           # 'parity', 'overparity', 'last_man_standing'
+    auto_phase_transition: bool = True
+    allow_no_elimination: bool = True
+    min_votes_to_eliminate: int = 0         # 0=plurality, -1=force RNG if 0 votes
+    pms_enabled: bool = True
+    gms_see_pms: bool = True
+    village_name: str = 'Village'           # Display name for village faction
+    elim_name: str = 'Elims'                # Display name for eliminator faction
+
+
+@dataclass
+class RoleConfig:
+    """Role-specific settings for Tyrian and other game modes."""
+    game_mode: str = 'all'                  # 'all', 'tyrian', etc.
+    seeker_mode: str = 'both'               # 'role_only', 'alignment_only', 'both'
+    thug_mode: str = 'survive'              # 'survive', 'delayed_phase', 'delayed_cycle'
+    coinshot_ammo: int = 0                  # 0 = unlimited
+    smoker_phase: str = 'both'              # When Smoker can change target
+    tineye_phase: str = 'night'             # When Tineye can submit message
+    pm_enabling_roles: list[str] = field(default_factory=lambda: ['Tineye'])
+
+
+@dataclass
+class Channels:
+    """Discord channel and thread IDs."""
+    game_channel_id: Optional[int] = None
+    dead_spec_thread_id: Optional[int] = None
+    elim_discussion_thread_id: Optional[int] = None
+    pm_threads: dict[frozenset, int] = field(default_factory=dict)
+
+
+@dataclass
 class Game:
     """Represents an elimination game instance."""
     guild_id: int
+    
+    # Sub-configurations
+    config: GameConfig = field(default_factory=GameConfig)
+    roles: RoleConfig = field(default_factory=RoleConfig)
+    channels: Channels = field(default_factory=Channels)
+    
+    # People
     gm_ids: list[int] = field(default_factory=list)
     players: dict[int, Player] = field(default_factory=dict)
     spectators: list[int] = field(default_factory=list)
@@ -39,34 +83,6 @@ class Game:
     phase_end_time: Optional[datetime] = None
     warnings_sent: set = field(default_factory=set)
     
-    # Game mode and role settings
-    game_mode: str = 'all'  # 'all', 'tyrian', etc.
-    seeker_mode: str = 'both'  # 'role_only', 'alignment_only', 'both'
-    thug_mode: str = 'survive'  # 'survive', 'delayed_phase', 'delayed_cycle'
-    coinshot_ammo: int = 0  # 0 = unlimited, positive = max kills per Coinshot
-    smoker_phase: str = 'both'  # 'day', 'night', or 'both' - when Smoker can change target
-    tineye_phase: str = 'night'  # 'day', 'night', or 'both' - when Tineye can submit message
-    
-    # Configuration
-    anon_mode: bool = False
-    day_length_minutes: int = 2880  # 48 hours
-    night_length_minutes: int = 1440  # 24 hours
-    win_condition: str = 'parity'  # 'parity', 'overparity', 'last_man_standing'
-    auto_phase_transition: bool = True
-    allow_no_elimination: bool = True
-    min_votes_to_eliminate: int = 0  # 0=plurality, -1=force RNG if 0 votes
-    
-    # Channel IDs
-    game_channel_id: Optional[int] = None
-    dead_spec_thread_id: Optional[int] = None
-    elim_discussion_thread_id: Optional[int] = None
-    
-    # PM System
-    pm_threads: dict[frozenset, int] = field(default_factory=dict)
-    pms_enabled: bool = True
-    gms_see_pms: bool = True
-    pm_enabling_roles: list[str] = field(default_factory=lambda: ['Tineye'])
-    
     # Game metadata
     game_tag: Optional[str] = None
     flavor_name: Optional[str] = None
@@ -74,6 +90,7 @@ class Game:
     # Voting
     votes: dict[int, dict[int, int | str]] = field(default_factory=dict)
     eliminated: list[int] = field(default_factory=list)
+    vote_history: list[dict] = field(default_factory=list)  # [{day, result_text, eliminated_id, ...}]
     
     # Night Actions - {day_number: {action_type: [(actor_id, target_id, extra_data)]}}
     night_actions: dict[int, dict[str, list]] = field(default_factory=dict)
@@ -82,21 +99,23 @@ class Game:
     day_actions: dict[int, dict[str, list]] = field(default_factory=dict)
     
     # Role-specific tracking
-    smoker_targets: dict[int, Optional[int]] = field(default_factory=dict)  # {smoker_id: protected_player_id}
-    smoker_active: dict[int, bool] = field(default_factory=dict)  # {smoker_id: is_active}
-    thug_used: set[int] = field(default_factory=set)  # player_ids who used Thug protection
-    delayed_deaths: list[tuple[int, int, str]] = field(default_factory=list)  # [(player_id, trigger_day, 'day'|'night')]
-    lurcher_last_targets: dict[int, int] = field(default_factory=dict)  # {lurcher_id: last_protected_id}
-    mistborn_powers_used: dict[int, list[str]] = field(default_factory=dict)  # {player_id: [used_powers]}
-    mistborn_current_power: dict[int, Optional[str]] = field(default_factory=dict)  # {player_id: current_power}
-    tineye_messages: dict[int, str] = field(default_factory=dict)  # {player_id: message} - one per Tineye
-    coinshot_kills_used: dict[int, int] = field(default_factory=dict)  # {player_id: kills_used}
+    smoker_targets: dict[int, Optional[int]] = field(default_factory=dict)
+    smoker_active: dict[int, bool] = field(default_factory=dict)
+    thug_used: set[int] = field(default_factory=set)
+    delayed_deaths: list[tuple[int, int, str]] = field(default_factory=list)
+    lurcher_last_targets: dict[int, int] = field(default_factory=dict)
+    mistborn_powers_used: dict[int, list[str]] = field(default_factory=dict)
+    mistborn_current_power: dict[int, Optional[str]] = field(default_factory=dict)
+    tineye_messages: dict[int, str] = field(default_factory=dict)
+    coinshot_kills_used: dict[int, int] = field(default_factory=dict)
     
     # Action results (for GM PM feedback)
-    action_results: dict[int, list[str]] = field(default_factory=dict)  # {player_id: [result messages]}
+    action_results: dict[int, list[str]] = field(default_factory=dict)
     
     # Anonymous mode
     available_identities: list[str] = field(default_factory=lambda: list(ANON_IDENTITIES.keys()))
+    
+    # ===== HELPER METHODS =====
     
     def get_player_display_name(self, user_id: int) -> str:
         """Get the appropriate display name based on game mode."""
@@ -104,9 +123,45 @@ class Game:
         if not player:
             return "Unknown"
         
-        if self.anon_mode and player.anon_identity:
+        if self.config.anon_mode and player.anon_identity:
             return player.anon_identity
         return player.display_name
+    
+    def get_faction_name(self, alignment: str) -> str:
+        """Get the display name for a faction (village/elims)."""
+        if alignment == 'village':
+            return self.config.village_name
+        elif alignment == 'elims':
+            return self.config.elim_name
+        return alignment.title() if alignment else "Unknown"
+    
+    def get_player_role_display(self, user_id: int) -> str:
+        """Get 'FactionName RoleName' for a player (e.g., 'Village Tineye' or 'Spiked Lurcher')."""
+        player = self.players.get(user_id)
+        if not player:
+            return "Unknown"
+        
+        faction = self.get_faction_name(player.alignment)
+        role = player.role or 'Vanilla'
+        return f"{faction} {role}"
+    
+    def get_current_phase_type(self) -> str:
+        """Get current phase type: 'Day' or 'Night'."""
+        return 'Day' if 'Day' in self.phase else 'Night'
+    
+    def is_day(self) -> bool:
+        """Check if it's currently day phase."""
+        return 'Day' in self.phase
+    
+    def is_night(self) -> bool:
+        """Check if it's currently night phase."""
+        return 'Night' in self.phase
+    
+    def is_allowed_phase(self, allowed: str) -> bool:
+        """Check if current phase matches allowed setting."""
+        if allowed == 'both':
+            return True
+        return allowed.lower() == self.get_current_phase_type().lower()
     
     def get_alive_players(self) -> list[Player]:
         """Get all living players."""
@@ -125,7 +180,7 @@ class Game:
         alive_players = self.get_alive_players()
         
         # Last man standing - only one player left
-        if self.win_condition == 'last_man_standing':
+        if self.config.win_condition == 'last_man_standing':
             if len(alive_players) == 1:
                 return 'last_standing'
             return None
@@ -135,7 +190,7 @@ class Game:
             return 'village'
         
         # Elims win at parity or overparity
-        if self.win_condition == 'parity':
+        if self.config.win_condition == 'parity':
             if elim_count >= village_count:
                 return 'elims'
         else:  # overparity
@@ -165,53 +220,67 @@ class Game:
     def get_pm_thread_id(self, player1_id: int, player2_id: int) -> Optional[int]:
         """Get existing PM thread ID between two players, or None."""
         key = self.get_pm_thread_key(player1_id, player2_id)
-        return self.pm_threads.get(key)
+        return self.channels.pm_threads.get(key)
     
     def are_pms_available(self) -> bool:
         """Check if PMs are currently available based on settings and roles."""
-        if not self.pms_enabled:
+        if not self.config.pms_enabled:
             return False
         
         # If no enabling roles specified, PMs are always available
-        if not self.pm_enabling_roles:
+        if not self.roles.pm_enabling_roles:
             return True
         
         # Check if any player with an enabling role is alive
         for player in self.players.values():
-            if player.is_alive and player.role in self.pm_enabling_roles:
+            if player.is_alive and player.role in self.roles.pm_enabling_roles:
                 return True
         
         return False
     
     def add_night_action(self, action_type: str, actor_id: int, target_id: int, extra_data: any = None):
-        """Record a night action."""
+        """Record a night action. Replaces any existing action of same type from same actor."""
         if self.day_number not in self.night_actions:
             self.night_actions[self.day_number] = {}
         if action_type not in self.night_actions[self.day_number]:
             self.night_actions[self.day_number][action_type] = []
+        
+        # Remove any existing action from this actor
+        self.night_actions[self.day_number][action_type] = [
+            action for action in self.night_actions[self.day_number][action_type]
+            if action[0] != actor_id
+        ]
+        # Add new action
         self.night_actions[self.day_number][action_type].append((actor_id, target_id, extra_data))
     
     def add_day_action(self, action_type: str, actor_id: int, target_id: int, extra_data: any = None):
-        """Record a day action (Rioter/Soother)."""
+        """Record a day action (Rioter/Soother). Replaces any existing action of same type from same actor."""
         if self.day_number not in self.day_actions:
             self.day_actions[self.day_number] = {}
         if action_type not in self.day_actions[self.day_number]:
             self.day_actions[self.day_number][action_type] = []
+        
+        # Remove any existing action from this actor
+        self.day_actions[self.day_number][action_type] = [
+            action for action in self.day_actions[self.day_number][action_type]
+            if action[0] != actor_id
+        ]
+        # Add new action
         self.day_actions[self.day_number][action_type].append((actor_id, target_id, extra_data))
     
     def get_night_actions(self, action_type: str = None) -> list | dict:
-        """Get night actions for current day. If action_type specified, returns list of that type."""
+        """Get night actions for current day."""
         day_actions = self.night_actions.get(self.day_number, {})
         if action_type:
             return day_actions.get(action_type, [])
         return day_actions
     
     def get_day_actions(self, action_type: str = None) -> list | dict:
-        """Get day actions for current day. If action_type specified, returns list of that type."""
-        day_actions = self.day_actions.get(self.day_number, {})
+        """Get day actions for current day."""
+        day_act = self.day_actions.get(self.day_number, {})
         if action_type:
-            return day_actions.get(action_type, [])
-        return day_actions
+            return day_act.get(action_type, [])
+        return day_act
     
     def is_smoked(self, player_id: int) -> bool:
         """Check if a player is protected by a Smoker."""

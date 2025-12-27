@@ -69,10 +69,14 @@ async def process_night_actions(guild, game) -> dict:
         if not player or not player.is_alive:
             continue
         
+        # Track remaining kills after protections
+        remaining_kills = len(killers)
+        lurcher_saved = False
+        
         # Check for Lurcher protection (blocks one kill)
         if target_id in protections and protections[target_id]:
-            # Protected! Remove one kill
-            results['saves'].append(target_id)
+            remaining_kills -= 1
+            lurcher_saved = True
             
             # Notify the Lurcher(s)
             for protector_id in protections[target_id]:
@@ -80,25 +84,24 @@ async def process_night_actions(guild, game) -> dict:
                     protector_id,
                     f"🛡️ Your target was attacked last night. Your protection saved them!"
                 )
-            
-            # If multiple kills, only one is blocked
-            if len(killers) > 1:
-                killers = killers[1:]  # Remove first kill, process rest
-            else:
-                continue  # Fully protected
+        
+        # If no remaining kills, they survived
+        if remaining_kills <= 0:
+            results['saves'].append(target_id)
+            continue
         
         # Check for Thug survival
         if player.role == 'Thug' and target_id not in game.thug_used:
             game.thug_used.add(target_id)
             results['saves'].append(target_id)
             
-            if game.thug_mode == 'survive':
+            if game.roles.thug_mode == 'survive':
                 game.add_action_result(
                     target_id,
                     "💪 You were attacked but your Thug ability saved you! (One-time use expended)"
                 )
                 continue
-            elif game.thug_mode == 'delayed_phase':
+            elif game.roles.thug_mode == 'delayed_phase':
                 # Attacked during Night X -> survive Day X+1 -> die at Night X+1 start
                 game.delayed_deaths.append((target_id, game.day_number + 1, 'night'))
                 game.add_action_result(
@@ -106,7 +109,7 @@ async def process_night_actions(guild, game) -> dict:
                     "💪 You were attacked! Your Thug ability lets you survive one more phase before death."
                 )
                 continue
-            elif game.thug_mode == 'delayed_cycle':
+            elif game.roles.thug_mode == 'delayed_cycle':
                 # Attacked during Night X -> survive Day X+1, Night X+1 -> die at Day X+2 start
                 game.delayed_deaths.append((target_id, game.day_number + 2, 'day'))
                 game.add_action_result(
@@ -144,29 +147,33 @@ async def process_night_actions(guild, game) -> dict:
         # Build result based on seeker_mode
         target_name = game.get_player_display_name(target_id)
         
-        if game.seeker_mode == 'role_only':
+        if game.roles.seeker_mode == 'role_only':
             game.add_action_result(
                 actor_id,
-                f"🔍 **{target_name}** has the role: **{target_player.role or 'Unknown'}**"
+                f"🔍 **{target_name}** has the role: **{target_player.role or 'Vanilla'}**"
             )
-        elif game.seeker_mode == 'alignment_only':
+        elif game.roles.seeker_mode == 'alignment_only':
+            faction = game.get_faction_name(target_player.alignment)
             game.add_action_result(
                 actor_id,
-                f"🔍 **{target_name}** is aligned with: **{target_player.alignment.title() if target_player.alignment else 'Unknown'}**"
+                f"🔍 **{target_name}** is aligned with: **{faction}**"
             )
         else:  # both
+            faction = game.get_faction_name(target_player.alignment)
             game.add_action_result(
                 actor_id,
-                f"🔍 **{target_name}** is **{target_player.alignment.title() if target_player.alignment else 'Unknown'}** - **{target_player.role or 'Vanilla'}**"
+                f"🔍 **{target_name}** is **{faction}** - **{target_player.role or 'Vanilla'}**"
             )
     
     return results
 
 
-def apply_vote_modifications(game) -> dict:
+def calculate_effective_votes(game, add_results: bool = False) -> dict:
     """
-    Apply Rioter/Soother effects to votes.
+    Calculate effective votes after Rioter/Soother effects.
     Returns modified vote tally: {target_id: effective_vote_count}
+    
+    If add_results is True, also queues action feedback for players.
     """
     raw_votes = game.get_day_votes().copy()
     day_actions = game.day_actions.get(game.day_number, {})
@@ -190,17 +197,19 @@ def apply_vote_modifications(game) -> dict:
         
         # Check if target is smoked
         if game.is_smoked(target_id):
-            game.add_action_result(
-                actor_id,
-                f"😶 Your Soothe was blocked. The target was protected from your influence."
-            )
+            if add_results:
+                game.add_action_result(
+                    actor_id,
+                    f"😶 Your Soothe was blocked. The target was protected from your influence."
+                )
             continue
         
         cancelled_votes.add(target_id)
-        game.add_action_result(
-            actor_id,
-            f"😶 You successfully Soothed **{game.get_player_display_name(target_id)}**'s vote."
-        )
+        if add_results:
+            game.add_action_result(
+                actor_id,
+                f"😶 You successfully Soothed **{game.get_player_display_name(target_id)}**'s vote."
+            )
     
     # Process Rioter actions (redirect votes)
     riot_actions = day_actions.get('redirect_vote', [])
@@ -219,17 +228,19 @@ def apply_vote_modifications(game) -> dict:
         
         # Check if target is smoked
         if game.is_smoked(target_id):
-            game.add_action_result(
-                actor_id,
-                f"😤 Your Riot was blocked. The target was protected from your influence. Your vote is still cancelled."
-            )
+            if add_results:
+                game.add_action_result(
+                    actor_id,
+                    f"😤 Your Riot was blocked. The target was protected from your influence. Your vote is still cancelled."
+                )
             continue
         
         redirected_votes[target_id] = new_target_id
-        game.add_action_result(
-            actor_id,
-            f"😤 You successfully Rioted **{game.get_player_display_name(target_id)}**'s vote to **{game.get_player_display_name(new_target_id)}**."
-        )
+        if add_results:
+            game.add_action_result(
+                actor_id,
+                f"😤 You successfully Rioted **{game.get_player_display_name(target_id)}**'s vote to **{game.get_player_display_name(new_target_id)}**."
+            )
     
     # Calculate effective votes
     effective_votes = {}  # {target_id: count}
@@ -254,20 +265,39 @@ def apply_vote_modifications(game) -> dict:
     return effective_votes
 
 
+def apply_vote_modifications(game) -> dict:
+    """
+    Apply Rioter/Soother effects to votes and queue action feedback.
+    Returns modified vote tally: {target_id: effective_vote_count}
+    """
+    return calculate_effective_votes(game, add_results=True)
+
+
 def format_vote_count_with_modifications(game) -> str:
     """
     Format vote count showing raw votes but calculated totals.
     Shows who voted for whom, but totals reflect Riot/Soothe effects.
+    
+    Key behavior:
+    - Shows effective vote COUNT (after Riot/Soothe)
+    - Shows raw voter NAMES (who publicly voted for each target)
+    - If a target has effective votes but no raw votes (from Riot redirect),
+      they appear with the count but no names listed
+    
+    Does NOT add action results (use apply_vote_modifications for that).
     """
     raw_votes = game.get_day_votes()
-    effective_votes = apply_vote_modifications(game)
+    effective_votes = calculate_effective_votes(game, add_results=False)
     
     # Group raw votes by target
-    vote_groups = {}
+    raw_vote_groups = {}
     for voter_id, target_id in raw_votes.items():
-        if target_id not in vote_groups:
-            vote_groups[target_id] = []
-        vote_groups[target_id].append(voter_id)
+        if target_id not in raw_vote_groups:
+            raw_vote_groups[target_id] = []
+        raw_vote_groups[target_id].append(voter_id)
+    
+    # Find all targets (union of raw and effective)
+    all_targets = set(raw_vote_groups.keys()) | set(effective_votes.keys())
     
     # Find players who didn't vote
     alive_players = [uid for uid, p in game.players.items() if p.is_alive]
@@ -275,16 +305,19 @@ def format_vote_count_with_modifications(game) -> str:
     
     lines = ["📊 **Final Vote Count**"]
     
-    # Sort by effective vote count (descending)
+    # Sort by effective vote count (descending), then by target name
     sorted_targets = sorted(
-        vote_groups.keys(),
-        key=lambda t: effective_votes.get(t, 0),
+        all_targets,
+        key=lambda t: (effective_votes.get(t, 0), str(t)),
         reverse=True
     )
     
     for target_id in sorted_targets:
-        voter_ids = vote_groups[target_id]
         effective_count = effective_votes.get(target_id, 0)
+        
+        # Skip targets with 0 effective votes (their votes were Soothed/redirected away)
+        if effective_count == 0:
+            continue
         
         # Get target name
         if target_id == 'vote_none':
@@ -292,11 +325,17 @@ def format_vote_count_with_modifications(game) -> str:
         else:
             target_name = game.get_player_display_name(target_id)
         
-        # Get voter names
-        voter_names = [game.get_player_display_name(vid) for vid in voter_ids]
+        # Get raw voter names (only those who publicly voted for this target)
+        raw_voters = raw_vote_groups.get(target_id, [])
+        voter_names = [game.get_player_display_name(vid) for vid in raw_voters]
         
-        # Show effective count (may differ from raw count due to Riot/Soothe)
-        lines.append(f"**{target_name}** ({effective_count}): {', '.join(voter_names)}")
+        # Show effective count with raw voter names
+        # If no raw voters (vote came from Riot), names list will be empty
+        if voter_names:
+            lines.append(f"**{target_name}** ({effective_count}): {', '.join(voter_names)}")
+        else:
+            # Target only has votes from Riot redirects - show count but no names
+            lines.append(f"**{target_name}** ({effective_count}):")
     
     # Add abstainers
     if abstainers:

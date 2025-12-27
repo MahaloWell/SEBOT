@@ -69,7 +69,7 @@ class PlayersCog(commands.Cog):
             status = "💀" if not player.is_alive else "✅"
             
             # Display name based on mode
-            if game.anon_mode and player.anon_identity:
+            if game.config.anon_mode and player.anon_identity:
                 name_display = player.anon_identity
             else:
                 name_display = player.display_name
@@ -79,7 +79,7 @@ class PlayersCog(commands.Cog):
             # Show role info for dead players or GMs
             role_info = ""
             if player.alignment and (not player.is_alive or is_gm):
-                role_info = f" - {player.alignment.title()}"
+                role_info = f" - {game.get_faction_name(player.alignment)}"
                 if player.role:
                     role_info += f" ({player.role})"
             
@@ -143,8 +143,8 @@ class PlayersCog(commands.Cog):
         game.spectators.append(user_id)
         
         # Add to dead/spec thread
-        if game.dead_spec_thread_id:
-            dead_spec_thread = guild.get_thread(game.dead_spec_thread_id)
+        if game.channels.dead_spec_thread_id:
+            dead_spec_thread = guild.get_thread(game.channels.dead_spec_thread_id)
             if dead_spec_thread:
                 await add_user_to_thread_safe(dead_spec_thread, member)
         
@@ -156,8 +156,8 @@ class PlayersCog(commands.Cog):
                     await add_user_to_thread_safe(private_thread, member)
         
         # Add to elim thread
-        if game.elim_discussion_thread_id:
-            elim_thread = guild.get_thread(game.elim_discussion_thread_id)
+        if game.channels.elim_discussion_thread_id:
+            elim_thread = guild.get_thread(game.channels.elim_discussion_thread_id)
             if elim_thread:
                 await add_user_to_thread_safe(elim_thread, member)
         
